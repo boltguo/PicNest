@@ -1,0 +1,9 @@
+packages:
+  - web
+
+publicHoistPattern:
+  - "*@heroui*"
+
+allowBuilds:
+  esbuild: true
+  workerd: true

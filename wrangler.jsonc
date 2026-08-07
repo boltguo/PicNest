@@ -1,0 +1,47 @@
+{
+  "name": "picnest",
+  "main": "worker/src/index.ts",
+  "compatibility_date": "2026-08-01",
+  "assets": {
+    "directory": "web/dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    // The asset router answers browser *navigations* before the Worker runs, so
+    // without this a pasted /f/ link or an opened /s/ share would get index.html
+    // instead of the image. These prefixes must always reach the Worker.
+    "run_worker_first": ["/api/*", "/f/*", "/s/*"],
+  },
+  "r2_buckets": [
+    {
+      "binding": "BUCKET",
+      "bucket_name": "picnest",
+    },
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "picnest",
+      // Replace with the real id from `wrangler d1 create picnest` before deploying.
+      // Local dev (`wrangler dev`) uses a local SQLite file and ignores this id.
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations",
+    },
+  ],
+  // There is one password and it doubles as the JWT signing key, so an
+  // unthrottled /api/login is the whole attack surface. This is the platform's
+  // own rate limiter (per colo, no storage, no billing); `namespace_id` is a
+  // local label and `period` accepts only 10 or 60.
+  "ratelimits": [
+    {
+      "name": "LOGIN_LIMITER",
+      "namespace_id": "1001",
+      "simple": {
+        "limit": 5,
+        "period": 60,
+      },
+    },
+  ],
+  "observability": {
+    "enabled": true,
+  },
+}

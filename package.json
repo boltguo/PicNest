@@ -1,0 +1,30 @@
+{
+  "name": "picnest",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.11.0",
+  "scripts": {
+    "dev": "mkdir -p web/dist && pnpm db:migrate:local && concurrently -n worker,web -c blue,green \"wrangler dev\" \"pnpm -F @picnest/web dev\"",
+    "build": "pnpm -F @picnest/web build",
+    "deploy": "pnpm build && wrangler deploy",
+    "typecheck": "tsc -p worker && pnpm -F @picnest/web typecheck",
+    "secret": "wrangler secret put ADMIN_PASSWORD",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate:local": "wrangler d1 migrations apply picnest --local",
+    "db:migrate": "wrangler d1 migrations apply picnest --remote"
+  },
+  "dependencies": {
+    "@hono/zod-validator": "^0.4.2",
+    "drizzle-orm": "^0.45.2",
+    "hono": "^4.6.0",
+    "nanoid": "^5.0.9",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260801.0",
+    "concurrently": "^9.1.0",
+    "drizzle-kit": "^0.31.10",
+    "typescript": "^5.7.2",
+    "wrangler": "^4.0.0"
+  }
+}

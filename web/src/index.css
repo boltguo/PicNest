@@ -1,0 +1,189 @@
+@import "tailwindcss";
+@import "@heroui/styles";
+
+@theme {
+  --font-sans:
+    "SF Compact", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
+  /* Easing used by the custom frosted folder card below. */
+  --ease-frost: cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+body {
+  @apply bg-background font-sans text-foreground antialiased;
+  min-width: 320px;
+}
+
+/* ---------------------------------------------------------------------------
+ * Frosted folder card, ported from the frosted-folder reference design:
+ * an SVG folder back with a tab, photo items that pop out on hover, and a
+ * frosted-glass flap that tilts open (rotateX) carrying the label.
+ * Each item's geometry comes from CSS custom properties set inline in JSX.
+ * ------------------------------------------------------------------------- */
+
+.folder {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  text-align: inherit;
+  outline: none;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 160ms var(--ease-frost);
+}
+
+.folder-stage {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 20 / 17;
+  perspective: 1000px;
+}
+
+.folder-back {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  filter:
+    drop-shadow(0 1px 2px rgb(0 0 0 / 0.06))
+    drop-shadow(0 6px 12px rgb(0 0 0 / 0.06))
+    drop-shadow(0 18px 32px rgb(0 0 0 / 0.07));
+}
+
+.folder-contents {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+.folder-item {
+  position: absolute;
+  top: var(--top);
+  left: 50%;
+  width: var(--width);
+  aspect-ratio: var(--ratio);
+  z-index: var(--z);
+  transform:
+    translateX(-50%)
+    translateX(var(--closed-x))
+    translateY(0)
+    rotate(var(--closed-rotate));
+  transform-origin: center;
+  transition: transform 550ms var(--ease-frost);
+  transition-delay: var(--delay);
+  will-change: transform;
+}
+
+.folder:hover .folder-item,
+.folder:focus-visible .folder-item {
+  transform:
+    translateX(-50%)
+    translateX(var(--open-x))
+    translateY(-24%)
+    rotate(var(--open-rotate));
+}
+
+.folder-frame {
+  width: 100%;
+  height: 100%;
+  container-type: inline-size;
+  --pad: 3cqw;
+  --radius: 9cqw;
+}
+
+.folder-photo {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: var(--pad);
+  border-radius: var(--radius);
+  background: white;
+  box-shadow:
+    0 1px 3px rgb(0 0 0 / 0.1),
+    0 1px 2px -1px rgb(0 0 0 / 0.1);
+}
+
+.folder-photo img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: calc(var(--radius) - var(--pad));
+  object-fit: cover;
+}
+
+.folder-flap {
+  position: absolute;
+  inset: 24% 0 0;
+  z-index: 10;
+  border-radius: 7.5% / 11.6%;
+  /* Slightly more opaque and less saturated than the original reference:
+     real photo thumbnails behind the glass would otherwise smear into a
+     colored blob instead of reading as a frosted panel. */
+  background-image: linear-gradient(
+    to bottom,
+    rgb(255 255 255 / 0.72),
+    rgb(255 255 255 / 0.6)
+  );
+  box-shadow: 0 -2px 6px -1px rgb(0 0 0 / 0.08);
+  /* No manual -webkit- prefix: Lightning CSS adds it from the build targets.
+     Writing both by hand made it emit *only* the prefixed one, which Chrome
+     does not support — the frosted flap then rendered flat in production. */
+  backdrop-filter: blur(24px) saturate(130%);
+  transform-origin: bottom center;
+  transition: transform 550ms var(--ease-frost);
+}
+
+.folder:hover .folder-flap,
+.folder:focus-visible .folder-flap {
+  transform: rotateX(-30deg);
+}
+
+.folder-label {
+  position: absolute;
+  inset: auto 0 0;
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 14px;
+}
+
+.folder-title,
+.folder-meta {
+  overflow: hidden;
+  margin: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.folder-title {
+  color: var(--foreground);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+}
+
+.folder-meta {
+  margin-top: 1px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 15px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .folder:active {
+    transform: scale(0.98);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .folder,
+  .folder-item,
+  .folder-flap {
+    transition: none;
+  }
+}
