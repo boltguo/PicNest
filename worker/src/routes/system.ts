@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import { CONTENT_KEY_RE } from "../config";
 import { createDb, files } from "../db";
 import { requireAuth } from "../lib/auth";
-import { chunk, insertFileRow } from "../lib/files";
+import { chunk, insertFileRow, isKeyTaken } from "../lib/files";
 import { ensureFolders, folderSchema, sanitizeFileName } from "../lib/paths";
 import type { AppEnv } from "../types";
 
@@ -64,6 +64,14 @@ export const systemRoutes = new Hono<AppEnv>()
   .post("/api/repair", requireAuth, async (c) => {
     const db = createDb(c.env.DB);
 
+    // Rows first, then objects. The whole pass turns on which snapshot is
+    // older: a row is only safe to drop if the bucket was listed *after* it
+    // was read, otherwise an upload that finishes mid-scan looks exactly like
+    // a row whose object is gone — and deleting it cascades away that file's
+    // share links, which no later repair can put back.
+    const indexed = await db.select({ id: files.id, key: files.key }).from(files);
+    const indexedKeys = new Set(indexed.map((r) => r.key));
+
     const objects = new Map<string, ObjectMeta>();
     let cursor: string | undefined;
     do {
@@ -87,9 +95,6 @@ export const systemRoutes = new Hono<AppEnv>()
       cursor = res.truncated ? res.cursor : undefined;
     } while (cursor);
 
-    const indexed = await db.select({ id: files.id, key: files.key }).from(files);
-    const indexedKeys = new Set(indexed.map((r) => r.key));
-
     // One object may legitimately back several rows (the same image filed in
     // two folders), so an object counts as indexed if *any* row points at it.
     const missing = [...objects.entries()].filter(
@@ -97,18 +102,27 @@ export const systemRoutes = new Hono<AppEnv>()
     );
     const batch = missing.slice(0, IMPORT_LIMIT);
     for (const [, meta] of batch) await ensureFolders(db, meta.folder);
+    let imported = 0;
     for (const [key, meta] of batch) {
-      await insertFileRow(
-        db,
-        {
-          key,
-          folder: meta.folder,
-          size: meta.size,
-          mime: meta.mime,
-          createdAt: meta.uploaded,
-        },
-        meta.name
-      );
+      try {
+        await insertFileRow(
+          db,
+          {
+            key,
+            folder: meta.folder,
+            size: meta.size,
+            mime: meta.mime,
+            createdAt: meta.uploaded,
+          },
+          meta.name
+        );
+        imported++;
+      } catch (error) {
+        // The other side of reading rows first: an ordinary upload indexed
+        // this object after the snapshot, so it is not an orphan at all and
+        // the unique index says so. Nothing to import, nothing wrong.
+        if (!isKeyTaken(error)) throw error;
+      }
     }
 
     const orphaned = indexed.filter((r) => !objects.has(r.key));
@@ -122,7 +136,7 @@ export const systemRoutes = new Hono<AppEnv>()
     }
 
     return c.json({
-      imported: batch.length,
+      imported,
       removed: orphaned.length,
       objects: objects.size,
       /** Objects still waiting for a row. Run repair again to take the next batch. */
