@@ -21,10 +21,9 @@
     {
       "binding": "DB",
       "database_name": "picnest",
-      // Placeholder id. `wrangler d1 create picnest` gives you the real one; the
-      // Deploy to Cloudflare flow provisions the database and writes it back
-      // here itself. Local dev (`wrangler dev`) uses a SQLite file and ignores it.
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      // The Deploy to Cloudflare flow replaces this with the database selected
+      // for the cloned repository. Local dev uses SQLite and ignores this id.
+      "database_id": "75185edc-8a4e-4682-8a4d-b9d4f68f1532",
       "migrations_dir": "migrations",
     },
   ],
