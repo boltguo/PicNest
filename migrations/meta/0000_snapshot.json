@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "dbb997ca-8712-45df-9504-d4ff094aa204",
+  "id": "88399d04-9283-412d-8d90-3c81e2f669fc",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "files": {
@@ -58,20 +58,6 @@
           "notNull": false,
           "autoincrement": false
         },
-        "width": {
-          "name": "width",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "height": {
-          "name": "height",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
         "created_at": {
           "name": "created_at",
           "type": "integer",
@@ -87,6 +73,14 @@
           "columns": [
             "folder",
             "name"
+          ],
+          "isUnique": true
+        },
+        "idx_files_folder_key": {
+          "name": "idx_files_folder_key",
+          "columns": [
+            "folder",
+            "key"
           ],
           "isUnique": true
         },

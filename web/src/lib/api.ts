@@ -45,6 +45,22 @@ export interface ShareInfo {
   createdAt: number;
 }
 
+/** Mirrors `MAX_UPLOAD_BYTES` in worker/src/config.ts. */
+export const MAX_UPLOAD_BYTES = 32 * 1024 * 1024;
+
+/**
+ * Mirrors the format allow-list in worker/src/lib/image.ts. The Worker sniffs
+ * the bytes and is the one that decides; this only spares the user a round
+ * trip and an upload that was never going to be accepted.
+ */
+export const ACCEPTED_IMAGE_TYPES: Record<string, string[]> = {
+  "image/jpeg": [".jpg", ".jpeg"],
+  "image/png": [".png"],
+  "image/gif": [".gif"],
+  "image/webp": [".webp"],
+  "image/avif": [".avif"],
+};
+
 const http = axios.create();
 
 http.interceptors.request.use((config) => {

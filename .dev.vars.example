@@ -1,10 +1,14 @@
 # Copy to `.dev.vars` for local development.
 #
 # The Deploy to Cloudflare flow reads this file to learn which secrets to ask
-# for on its setup page, so the value is deliberately left empty: a default
+# for on its setup page, so the values are deliberately left empty: a default
 # here would be a default in every one-click deployment.
 #
-# ADMIN_PASSWORD doubles as the JWT signing key. A guessable password is a
-# guessable HMAC key — use a long random string, not a memorable one.
-# In production, set it with `pnpm secret`.
+# ADMIN_PASSWORD is the one password that unlocks the dashboard. It is only
+# ever compared against, never used as a key.
 ADMIN_PASSWORD=
+
+# JWT_SECRET signs session tokens and share unlock cookies. Generate it, do
+# not choose it — 32 random bytes, e.g. `openssl rand -base64 32`. Rotating it
+# signs every session out. In production `pnpm secret` sets both.
+JWT_SECRET=

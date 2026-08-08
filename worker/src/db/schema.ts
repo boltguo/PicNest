@@ -10,12 +10,18 @@ import {
 /**
  * Design notes
  *
- * R2 is the single source of truth for file bytes. Objects are
- * content-addressed — the key is a SHA-256 prefix, never the file name —
- * so a link is stable, unguessable, and can never serve different bytes
- * than it did yesterday. The display name and folder are presentation
- * only and live here; each object also carries them in its R2
- * customMetadata so a lost database can be rebuilt (see reconcile).
+ * R2 is the source of truth for file BYTES; this database is the source of
+ * truth for everything else — names, folders, which logical files exist, and
+ * share links. Neither half reconstructs the other, and a full backup is both
+ * of them. `POST /api/repair` reconciles the two, it does not restore one
+ * from the other; point-in-time recovery here is D1 Time Travel.
+ *
+ * Objects are content-addressed — the key is the SHA-256 of the bytes plus
+ * the extension the format sniffer assigned, never the file name — so a link
+ * is stable and can never serve different bytes than it did yesterday. It is
+ * not secret: anyone holding the same image can compute it, which is why `/f/`
+ * is defined as a permanent public link and `/s/` is where access control
+ * lives.
  *
  * Because the key is derived from content, the same image filed in two
  * folders is ONE object with TWO rows. `key` is therefore not unique and
@@ -29,7 +35,7 @@ export const files = sqliteTable(
   "files",
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
-    /** R2 object key: `<sha256 prefix><ext>`. Shared by identical content. */
+    /** R2 object key: `<sha256 hex><ext>`. Shared by identical content. */
     key: text("key").notNull(),
     /** Folder path without trailing slash; empty string means root. */
     folder: text("folder").notNull().default(""),
@@ -38,14 +44,11 @@ export const files = sqliteTable(
     size: integer("size").notNull(),
     mime: text("mime").notNull().default("application/octet-stream"),
     /**
-     * Full SHA-256 hex of the content; `key` is a prefix of it. Kept for
-     * integrity checks and future cross-extension dedup. Deliberately
-     * unindexed — nothing queries it yet, and lookups go through `key`.
+     * Full SHA-256 hex of the content; `key` is this plus an extension. Kept
+     * for integrity checks. Deliberately unindexed — nothing queries it, and
+     * lookups go through `key`.
      */
     hash: text("hash"),
-    /** Image dimensions; reserved for gallery layout / thumbnails. */
-    width: integer("width"),
-    height: integer("height"),
     createdAt: integer("created_at")
       .notNull()
       .default(sql`(unixepoch() * 1000)`),
@@ -53,6 +56,10 @@ export const files = sqliteTable(
   (t) => [
     // Keeps move/rename honest and makes "name taken?" a single lookup.
     uniqueIndex("idx_files_folder_name").on(t.folder, t.name),
+    // One image, one card. The upload route checks for a duplicate before
+    // inserting, but two parallel uploads of the same photo can both pass
+    // that check; this is what actually decides it.
+    uniqueIndex("idx_files_folder_key").on(t.folder, t.key),
     index("idx_files_folder").on(t.folder),
     index("idx_files_created_at").on(t.createdAt),
     index("idx_files_key").on(t.key),
@@ -76,7 +83,7 @@ export const shares = sqliteTable(
     fileId: integer("file_id")
       .notNull()
       .references(() => files.id, { onDelete: "cascade" }),
-    /** SHA-256 hex of the access password; null = no password. */
+    /** `pbkdf2-sha256$<iterations>$<salt>$<hash>`; null = no password. */
     passwordHash: text("password_hash"),
     /** Epoch ms; null = never expires. */
     expiresAt: integer("expires_at"),

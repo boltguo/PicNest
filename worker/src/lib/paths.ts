@@ -1,11 +1,8 @@
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
-import {
-  CONTENT_KEY_HEX,
-  NAME_COLLISION_ATTEMPTS,
-  RESERVED_PREFIX,
-} from "../config";
+import { NAME_COLLISION_ATTEMPTS, RESERVED_PREFIX } from "../config";
 import { files, folders, type Db } from "../db";
+import type { ImageFormat } from "./image";
 
 // Control characters plus path separators are never allowed in a key segment.
 const ILLEGAL_CHARS = /[\u0000-\u001f\u007f\/\\]/u;
@@ -63,24 +60,15 @@ export async function ensureFolders(db: Db, path: string): Promise<void> {
 }
 
 /**
- * Lowercased `.jpg`-style extension, or "" when there isn't a plausible
- * one. Deliberately strict: this string goes straight into an object key,
- * so anything unusual is dropped rather than escaped.
+ * Content-addressed object key: the full SHA-256 hex digest plus the
+ * extension the format sniffer assigned. Both halves are derived from the
+ * bytes alone, so `photo.jpg`, `photo.jpeg` and an extensionless copy of the
+ * same image all land on one key — which is what makes dedup work and
+ * `immutable` caching provably safe. The full digest also removes any need
+ * to check a truncated prefix for collisions before reusing an object.
  */
-function extensionOf(name: string): string {
-  const dot = name.lastIndexOf(".");
-  if (dot <= 0) return "";
-  const ext = name.slice(dot + 1).toLowerCase();
-  return /^[a-z0-9]{1,8}$/.test(ext) ? `.${ext}` : "";
-}
-
-/**
- * Content-addressed object key: a SHA-256 prefix plus the extension.
- * Identical bytes always produce the same key — that is what makes
- * uploads deduplicate and `immutable` caching provably safe.
- */
-export const contentKey = (hash: string, name: string) =>
-  hash.slice(0, CONTENT_KEY_HEX) + extensionOf(name);
+export const contentKey = (hash: string, format: ImageFormat) =>
+  hash + format.extension;
 
 /**
  * Resolve a collision-free display name inside `folder` by appending

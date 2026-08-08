@@ -19,24 +19,32 @@
 
 ## 功能
 
-- **上传** —— 拖拽、多文件并发、单文件进度
-- **整理** —— 文件夹、面包屑导航、跨文件夹移动、六种排序
+- **上传** —— 拖拽、剪贴板粘贴、多文件并发、单文件进度
+- **整理** —— 文件夹、面包屑导航、移动与重命名、六种排序
 - **浏览** —— 自适应网格、灯箱预览、查看详情
-- **直链** —— `/f/<key>`，缓存一年，随便往哪贴
+- **直链** —— `/f/<key>`，永久公开，随便往哪贴
 - **分享链接** —— 可设过期时间与访问密码，可查访问量、可撤销
 - **自动去重** —— 内容相同的图片只存一份，上传多少次都一样
 - **一个密码** —— JWT 会话 7 天，登录在边缘限流
 - **中英双语** —— 包括对外的分享页
+
+支持 JPEG、PNG、GIF、WebP、AVIF，单文件最大 32 MB。格式由文件自身的字节判定，不采信
+浏览器声明的 `Content-Type`。
 
 ## 部署
 
 ### 一键部署
 
 点页面顶部那个按钮。Cloudflare 会把这个仓库克隆到你自己的 GitHub 账号下，替你创建
-R2 桶和 D1 数据库，在设置页问你要一个管理密码，然后部署。之后往你那份仓库推代码就会
+R2 桶和 D1 数据库，在设置页问你要两个密钥，然后部署。之后往你那份仓库推代码就会
 自动重新部署。
 
-**密码要用长的随机串。** 它同时是 JWT 的签名密钥，密码能猜中就等于会话能伪造。
+设置页要填的是这两个：
+
+- `ADMIN_PASSWORD` —— 你登录时输入的密码，挑个好的。
+- `JWT_SECRET` —— 会话的签名密钥。**这个要生成，不要自己想**：
+  `openssl rand -base64 32`。它是 HMAC 密钥，用一个记得住的字符串当密钥，等于
+  任何一个被截获的会话令牌都能拿去离线穷举。
 
 部署完在面板里还有两件事要做：
 
@@ -48,7 +56,7 @@ R2 桶和 D1 数据库，在设置页问你要一个管理密码，然后部署�
 ```bash
 npx wrangler r2 bucket create picnest
 npx wrangler d1 create picnest   # 把 database_id 填进 wrangler.jsonc
-pnpm secret                      # 设置 ADMIN_PASSWORD
+pnpm secret                      # 询问 ADMIN_PASSWORD，自动生成 JWT_SECRET
 pnpm deploy                      # 构建 + 迁移 + 发布
 ```
 
@@ -56,7 +64,7 @@ pnpm deploy                      # 构建 + 迁移 + 发布
 
 ```bash
 pnpm install
-cp .dev.vars.example .dev.vars   # 设置 ADMIN_PASSWORD
+cp .dev.vars.example .dev.vars   # 设置 ADMIN_PASSWORD 和 JWT_SECRET
 pnpm dev                         # worker :8787 + vite :5173
 ```
 
@@ -97,19 +105,40 @@ flowchart LR
 ```
 
 一个 Worker 扛下全部：React 应用作为静态资源、JSON API、图片字节，以及服务端渲染的
-分享页。图片存在 R2，它是唯一事实来源；D1 存名称、文件夹和分享链接，随时可以用
-`POST /api/reconcile` 从 R2 重建。
+分享页。
 
-对象以内容哈希为 key，去重因此是免费的 —— 同一张照片传进三个文件夹，得到的是三条记录
-指向同一个对象。单文件上限 32 MB，且只收图片。
+对象以内容的 SHA-256 为 key，去重因此是免费的 —— 同一张照片传进三个文件夹，得到的是
+三条记录指向同一个对象。
+
+### 备份
+
+**R2 是图片字节的事实来源，D1 是其余一切的事实来源** —— 名称、文件夹、有哪些逻辑文件，
+以及全部分享链接。完整备份是两边加起来，任何一边都推不出另一边。
+
+`POST /api/repair` 做的是两边对账：R2 里有对象但没有记录的导入，有记录但对象已经没了的
+删掉。它是一致性修复，**不是**数据库恢复。每个对象只带着它第一次上传时的名称和文件夹，
+所以导入能把图片按原名找回来，但找不回重命名、移动、去重图片被归到的第二个文件夹，以及
+任何分享链接。那些要靠
+[D1 Time Travel](https://developers.cloudflare.com/d1/reference/time-travel/) 恢复到
+某个时间点 —— 免费计划 7 天，付费计划 30 天。
 
 ### 安全
 
-- 登录限流：每 IP 每分钟 5 次，在边缘拦。
-- 会话是用 `ADMIN_PASSWORD` 签名的 HS256 JWT —— 改密码即吊销所有会话。
-- 分享密码在浏览器里哈希，明文不会到达 Worker。
-- 存储的字节带 `Content-Security-Policy: sandbox` 和 `nosniff` 返回，上传的 SVG
-  没法在你的域上执行脚本。
+- 登录限流：每 IP 每分钟 5 次，在边缘拦；输入分享密码限流：每 IP 每条链接每分钟 10 次。
+- 会话是用 `JWT_SECRET` 签名的 HS256 JWT，这个密钥是随机的，和管理密码分开。
+  轮换它就等于把所有会话踢下线。
+- 分享密码走 POST body 传输，存的是加盐的 PBKDF2-SHA256，验证通过后换到一个 15 分钟的
+  签名 `HttpOnly` Cookie，且只对那一条链接有效。URL 里不会出现任何由密码推导出来的东西。
+- 上传按文件签名判定格式，不看 `Content-Type`。SVG 不在支持的格式里。
+- 存储的字节带 `Content-Security-Policy: sandbox` 和 `nosniff` 返回；管理页和分享页
+  各自还有一套严格的 CSP。
+
+`/f/<key>` 按设计就是**永久公开链接**。key 是图片的哈希，手上有同一张图的人自己就能算出
+来 —— 访问控制在 `/s/<token>` 上，不在 `/f/` 上。这个响应会让浏览器和中间缓存留一年，
+删除之后已经缓存的副本收不回来。
+
+PicNest 原样存储、原样返回你的字节，不会清除 EXIF。手机直出的照片可能带着设备型号和
+拍摄位置。
 
 ## API
 
@@ -126,11 +155,12 @@ flowchart LR
 | POST | `/api/folder` | `{path}` —— 创建（幂等） | ✓ |
 | DELETE | `/api/folder?path=` | 递归删除文件夹 | ✓ |
 | POST | `/api/share` | `{id, hours?, password?}` → `{url, exp}` | ✓ |
-| GET | `/api/shares` | 分享列表与访问量 | ✓ |
+| GET | `/api/shares` | 有效的分享列表与访问量 | ✓ |
 | DELETE | `/api/share?token=` | 撤销分享 | ✓ |
-| POST | `/api/reconcile` | 从 R2 重建 D1 索引 | ✓ |
+| POST | `/api/repair` | D1 索引与 R2 对账修复 | ✓ |
 | GET | `/f/<key>` | 公开直链 | - |
-| GET | `/s/<token>` | 访问分享 | - |
+| GET | `/s/<token>` | 访问分享，或密码表单 | - |
+| POST | `/s/<token>` | `password=` → 解锁 Cookie，然后重定向 | - |
 
 ## 费用
 

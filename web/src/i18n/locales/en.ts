@@ -25,6 +25,7 @@ export default {
     submitting: "Signing in…",
   },
   header: {
+    // "used" is stored bytes: one image filed in two folders is counted once.
     stats: "{{count}} files · {{size}} used",
     logout: "Sign out",
     language: "切换到中文",
@@ -32,15 +33,19 @@ export default {
     more: "More",
   },
   dropzone: {
-    title: "Drag images here, or click to browse",
-    hint: "Multiple files supported",
+    title: "Drag images here, click to browse, or paste",
+    hint: "JPEG · PNG · GIF · WebP · AVIF, up to 32 MB each",
   },
   upload: {
+    queued: "Queued",
     done: "Done",
     error: "Failed",
+    retry: "Retry this upload",
+    dismiss: "Remove from the list",
     failedToast: "Failed to upload {{name}}",
     tooLargeToast: "{{name}} exceeds the upload size limit",
     wrongTypeToast: "{{name}} is not an image",
+    unsupportedToast: "{{type}} is not a supported format",
   },
   breadcrumb: { home: "Library" },
   folder: {
@@ -60,7 +65,7 @@ export default {
   },
   file: {
     empty: "No images yet",
-    emptyDescription: "Drop images into the area above, or click it to browse.",
+    emptyDescription: "Drop images into the area above, click it to browse, or paste one in.",
     emptyFolder: "This folder is empty",
     emptyFolderDescription:
       "Upload here, or move images in from another folder.",
@@ -88,12 +93,14 @@ export default {
   },
   lightbox: { fallbackTitle: "Image preview" },
   move: {
-    action: "Move to…",
-    title: "Move file",
+    action: "Move or rename…",
+    title: "Move or rename",
+    name: "File name",
+    nameInvalid: "Name cannot contain / or \\",
     destination: "Destination folder",
-    confirm: "Move",
-    moved: "File moved",
-    failed: "Could not move the file",
+    confirm: "Save",
+    saved: "File updated",
+    failed: "Could not update the file",
     noFolders: "No folders yet — create one to move files into.",
   },
   sort: {

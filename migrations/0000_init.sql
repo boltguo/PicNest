@@ -6,12 +6,11 @@ CREATE TABLE `files` (
 	`size` integer NOT NULL,
 	`mime` text DEFAULT 'application/octet-stream' NOT NULL,
 	`hash` text,
-	`width` integer,
-	`height` integer,
 	`created_at` integer DEFAULT (unixepoch() * 1000) NOT NULL
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX `idx_files_folder_name` ON `files` (`folder`,`name`);--> statement-breakpoint
+CREATE UNIQUE INDEX `idx_files_folder_key` ON `files` (`folder`,`key`);--> statement-breakpoint
 CREATE INDEX `idx_files_folder` ON `files` (`folder`);--> statement-breakpoint
 CREATE INDEX `idx_files_created_at` ON `files` (`created_at`);--> statement-breakpoint
 CREATE INDEX `idx_files_key` ON `files` (`key`);--> statement-breakpoint

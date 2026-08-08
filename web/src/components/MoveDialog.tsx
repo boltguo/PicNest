@@ -1,4 +1,14 @@
-import { Button, Label, ListBox, Modal, Select, toast } from "@heroui/react";
+import {
+  Button,
+  FieldError,
+  Input,
+  Label,
+  ListBox,
+  Modal,
+  Select,
+  TextField,
+  toast,
+} from "@heroui/react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -17,9 +27,15 @@ interface MoveDialogProps {
   onMoved: (folder: string) => void;
 }
 
+/**
+ * Where a file gets a new home: destination folder and display name in one
+ * dialog, because `PATCH /api/file` changes both in one metadata write and
+ * the stored object is untouched either way.
+ */
 export function MoveDialog({ file, onClose, onMoved }: MoveDialogProps) {
   const { t } = useTranslation();
   const [target, setTarget] = useState<string>(ROOT);
+  const [name, setName] = useState("");
 
   // Only fetched while the dialog is open; the tree rarely changes.
   const { data: folders } = useQuery({
@@ -29,14 +45,25 @@ export function MoveDialog({ file, onClose, onMoved }: MoveDialogProps) {
   });
 
   useEffect(() => {
-    if (file) setTarget(file.folder === "" ? ROOT : file.folder);
+    if (file) {
+      setTarget(file.folder === "" ? ROOT : file.folder);
+      setName(file.name);
+    }
   }, [file]);
+
+  const targetFolder = target === ROOT ? "" : target;
+  const trimmed = name.trim();
+  // Separators would read as a path; the Worker strips them anyway, and
+  // silently saving something other than what was typed is worse than saying so.
+  const nameInvalid = trimmed === "" || /[/\\]/.test(trimmed);
+  const unchanged =
+    (file?.folder ?? "") === targetFolder && trimmed === (file?.name ?? "");
 
   const move = useMutation({
     mutationFn: () =>
-      api.move(file!.id, { folder: target === ROOT ? "" : target }),
+      api.move(file!.id, { folder: targetFolder, name: trimmed }),
     onSuccess: ({ folder }) => {
-      toast.success(t("move.moved"));
+      toast.success(t("move.saved"));
       onMoved(folder);
       onClose();
     },
@@ -44,7 +71,6 @@ export function MoveDialog({ file, onClose, onMoved }: MoveDialogProps) {
   });
 
   const options = [ROOT, ...(folders ?? [])];
-  const unchanged = (file?.folder ?? "") === (target === ROOT ? "" : target);
 
   return (
     <Modal.Backdrop
@@ -59,29 +85,41 @@ export function MoveDialog({ file, onClose, onMoved }: MoveDialogProps) {
             <Modal.Heading>{t("move.title")}</Modal.Heading>
           </Modal.Header>
           <Modal.Body>
-            <Select
-              selectedKey={target}
-              onSelectionChange={(key) => setTarget(key as string)}
-              fullWidth
-            >
-              <Label>{t("move.destination")}</Label>
-              <Select.Trigger>
-                <Select.Value />
-                <Select.Indicator />
-              </Select.Trigger>
-              <Select.Popover>
-                <ListBox>
-                  {options.map((path) => (
-                    <ListBox.Item key={path} id={path}>
-                      {path === ROOT ? t("breadcrumb.home") : path}
-                    </ListBox.Item>
-                  ))}
-                </ListBox>
-              </Select.Popover>
-            </Select>
-            {folders?.length === 0 && (
-              <p className="text-muted mt-2 text-[13px]">{t("move.noFolders")}</p>
-            )}
+            <div className="flex flex-col gap-4">
+              <TextField
+                value={name}
+                onChange={setName}
+                isInvalid={name !== "" && nameInvalid}
+                fullWidth
+              >
+                <Label>{t("move.name")}</Label>
+                <Input />
+                <FieldError>{t("move.nameInvalid")}</FieldError>
+              </TextField>
+              <Select
+                selectedKey={target}
+                onSelectionChange={(key) => setTarget(key as string)}
+                fullWidth
+              >
+                <Label>{t("move.destination")}</Label>
+                <Select.Trigger>
+                  <Select.Value />
+                  <Select.Indicator />
+                </Select.Trigger>
+                <Select.Popover>
+                  <ListBox>
+                    {options.map((path) => (
+                      <ListBox.Item key={path} id={path}>
+                        {path === ROOT ? t("breadcrumb.home") : path}
+                      </ListBox.Item>
+                    ))}
+                  </ListBox>
+                </Select.Popover>
+              </Select>
+              {folders?.length === 0 && (
+                <p className="text-muted text-[13px]">{t("move.noFolders")}</p>
+              )}
+            </div>
           </Modal.Body>
           <Modal.Footer>
             <Button slot="close" variant="tertiary">
@@ -89,7 +127,7 @@ export function MoveDialog({ file, onClose, onMoved }: MoveDialogProps) {
             </Button>
             <Button
               variant="primary"
-              isDisabled={unchanged}
+              isDisabled={unchanged || nameInvalid}
               isPending={move.isPending}
               onPress={() => move.mutate()}
             >

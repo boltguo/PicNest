@@ -31,6 +31,7 @@ import { SharesDialog } from "../components/SharesDialog";
 import { SortMenu } from "../components/SortMenu";
 import { UploadDropzone } from "../components/UploadDropzone";
 import { UploadProgressList } from "../components/UploadProgressList";
+import { usePasteUpload } from "../hooks/usePasteUpload";
 import { useUploads } from "../hooks/useUploads";
 import {
   absoluteUrl,
@@ -70,7 +71,9 @@ export default function DashboardPage() {
   const navigateToFolder = (path: string) =>
     setSearchParams(path === "" ? {} : { folder: path });
 
-  const { tasks, start } = useUploads();
+  const { tasks, start, retry, dismiss } = useUploads();
+  // Paste lands in the folder currently on screen, same as a drop would.
+  usePasteUpload((files) => start(files, folder));
 
   const [preview, setPreview] = useState<FileInfo | null>(null);
   const [pendingDelete, setPendingDelete] = useState<FileInfo | null>(null);
@@ -207,7 +210,7 @@ export default function DashboardPage() {
       </header>
 
       <UploadDropzone onFiles={(files) => start(files, folder)} />
-      <UploadProgressList tasks={tasks} />
+      <UploadProgressList tasks={tasks} onRetry={retry} onDismiss={dismiss} />
 
       <div className="flex items-center justify-between gap-3">
         <Breadcrumb folder={folder} onNavigate={navigateToFolder} />

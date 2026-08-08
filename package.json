@@ -8,7 +8,7 @@
     "build": "pnpm -F @picnest/web build",
     "deploy": "pnpm build && pnpm db:migrate && wrangler deploy",
     "typecheck": "tsc -p worker && pnpm -F @picnest/web typecheck",
-    "secret": "wrangler secret put ADMIN_PASSWORD",
+    "secret": "wrangler secret put ADMIN_PASSWORD && openssl rand -base64 32 | wrangler secret put JWT_SECRET",
     "db:generate": "drizzle-kit generate",
     "db:migrate:local": "wrangler d1 migrations apply picnest --local",
     "db:migrate": "wrangler d1 migrations apply picnest --remote"

@@ -15,16 +15,15 @@ interface ObjectMeta {
   mime: string;
   name: string;
   folder: string;
-  /** R2's own upload time, so a rebuilt index keeps the original ordering. */
+  /** R2's own upload time, so an imported row keeps the original ordering. */
   uploaded: number;
 }
 
 /**
- * Recover the display name and folder an object was uploaded with.
+ * Recover a display name and folder for an object that has no row.
  * Object keys are content hashes and carry no such information, so the
  * customMetadata written at upload time is the only source — falling back
- * to the key itself keeps objects added out of band (or by an older,
- * path-keyed version of this app) importable.
+ * to the key itself keeps objects added out of band importable.
  */
 function metaFor(key: string, custom: Record<string, string> | undefined) {
   const slash = key.lastIndexOf("/");
@@ -40,11 +39,20 @@ function metaFor(key: string, custom: Record<string, string> | undefined) {
 export const systemRoutes = new Hono<AppEnv>()
 
   /**
-   * Rebuild the D1 index from the R2 bucket (R2 is the source of truth):
-   * inserts rows for objects missing from D1, removes rows whose object is
-   * gone. Run after out-of-band bucket edits or to recover a lost database.
+   * Reconcile the D1 index against the R2 bucket, in both directions:
+   * objects with no row are imported, rows whose object is gone are dropped.
+   * Run it after editing the bucket out of band, or after an upload failed
+   * between the R2 put and the D1 insert.
+   *
+   * This is a consistency repair, not a backup restore. R2 holds the bytes;
+   * D1 holds names, folders and share links, and an object carries only the
+   * name and folder it was *first* uploaded with — one set of customMetadata
+   * per object, never updated by a later rename or move. So an import gives
+   * you your images back under their original names, and cannot give you back
+   * renames, moves, the second folder a deduplicated image was filed in, or
+   * any share link. Point-in-time recovery of that metadata is D1 Time Travel.
    */
-  .post("/api/reconcile", requireAuth, async (c) => {
+  .post("/api/repair", requireAuth, async (c) => {
     const db = createDb(c.env.DB);
 
     const objects = new Map<string, ObjectMeta>();
@@ -66,9 +74,7 @@ export const systemRoutes = new Hono<AppEnv>()
       cursor = res.truncated ? res.cursor : undefined;
     } while (cursor);
 
-    const indexed = await db
-      .select({ id: files.id, key: files.key })
-      .from(files);
+    const indexed = await db.select({ id: files.id, key: files.key }).from(files);
     const indexedKeys = new Set(indexed.map((r) => r.key));
 
     // One object may legitimately back several rows (the same image filed in
@@ -102,8 +108,8 @@ export const systemRoutes = new Hono<AppEnv>()
     }
 
     return c.json({
-      added: missing.length,
+      imported: missing.length,
       removed: orphaned.length,
-      total: objects.size,
+      objects: objects.size,
     });
   });

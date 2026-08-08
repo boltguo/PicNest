@@ -23,7 +23,12 @@ const SECURITY_HEADERS: Record<string, string> = {
 };
 
 interface ServeOptions {
-  /** Long-lived caching. Safe only because keys are content-addressed. */
+  /**
+   * Long-lived client caching. Safe only because keys are content-addressed;
+   * note this is a cache header, not a Cloudflare edge cache — nothing here
+   * configures one, and a cached copy in someone's browser cannot be recalled
+   * when the file is deleted.
+   */
   immutable?: boolean;
   /**
    * Display name for the download. Defaults to the object's own

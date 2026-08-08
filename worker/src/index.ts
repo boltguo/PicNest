@@ -7,7 +7,20 @@ import { shareRoutes } from "./routes/shares";
 import { systemRoutes } from "./routes/system";
 import type { AppEnv } from "./types";
 
-const app = new Hono<AppEnv>()
+const app = new Hono<AppEnv>();
+
+/**
+ * API responses carry the library's contents and are answered per session —
+ * nothing between here and the browser should be keeping a copy, and nothing
+ * should be guessing at their type either.
+ */
+app.use("/api/*", async (c, next) => {
+  await next();
+  c.header("Cache-Control", "no-store");
+  c.header("X-Content-Type-Options", "nosniff");
+});
+
+app
   .route("/", authRoutes)
   .route("/", fileRoutes)
   .route("/", folderRoutes)

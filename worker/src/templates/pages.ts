@@ -9,6 +9,8 @@ const STRINGS = {
     notFoundBody: "This share link is invalid or has been deleted.",
     expiredTitle: "Link expired",
     expiredBody: "This share link has expired. Ask the owner for a new one.",
+    throttledTitle: "Too many attempts",
+    throttledBody: "Wait a minute before trying this link again.",
     passwordTitle: "Password required",
     passwordBody: "This share is protected by a password.",
     passwordPlaceholder: "Enter password",
@@ -20,6 +22,8 @@ const STRINGS = {
     notFoundBody: "这个分享链接无效或已被删除。",
     expiredTitle: "链接已过期",
     expiredBody: "这个分享链接已经过期，可以向分享者要一条新的。",
+    throttledTitle: "尝试次数过多",
+    throttledBody: "请等待一分钟后再打开这个链接。",
     passwordTitle: "需要访问密码",
     passwordBody: "这是一个受密码保护的分享。",
     passwordPlaceholder: "输入密码",
@@ -35,6 +39,7 @@ const STRINGS = {
 const ICONS = {
   notFound: `<path d="M9 17H7A5 5 0 0 1 7 7"/><path d="M15 7h2a5 5 0 0 1 4 8"/><line x1="8" x2="12" y1="12" y2="12"/><line x1="2" x2="22" y1="2" y2="22"/>`,
   expired: `<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>`,
+  throttled: `<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>`,
   password: `<circle cx="12" cy="16" r="1"/><rect x="3" y="10" width="18" height="12" rx="2"/><path d="M7 10V7a5 5 0 0 1 10 0v3"/>`,
 } as const;
 
@@ -53,6 +58,7 @@ const shell = (
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
     <link rel="icon" type="image/svg+xml" href="/logo.svg" />
     <title>${title} · PicNest</title>
     <style>
@@ -105,15 +111,31 @@ const shell = (
   </body>
 </html>`;
 
-export const errorPage = (locale: Locale, kind: "notFound" | "expired") => {
+export type ErrorKind = "notFound" | "expired" | "throttled";
+
+export const errorPage = (locale: Locale, kind: ErrorKind) => {
   const t = STRINGS[locale];
-  const title = kind === "notFound" ? t.notFoundTitle : t.expiredTitle;
-  const body = kind === "notFound" ? t.notFoundBody : t.expiredBody;
-  return shell(locale, title, kind, html`<h1>${title}</h1>
-    <p>${body}</p>`);
+  const copy = {
+    notFound: [t.notFoundTitle, t.notFoundBody],
+    expired: [t.expiredTitle, t.expiredBody],
+    throttled: [t.throttledTitle, t.throttledBody],
+  }[kind];
+  return shell(locale, copy[0], kind, html`<h1>${copy[0]}</h1>
+    <p>${copy[1]}</p>`);
 };
 
-export const passwordPage = (locale: Locale, wrongPassword: boolean) => {
+/**
+ * A plain form posting back to the same URL. It used to be a script that
+ * hashed the password in the browser and put the digest in the query string,
+ * which read as privacy but was the opposite: the digest was accepted as-is,
+ * so the URL in history, logs and Referer headers *was* the credential.
+ * The password now travels in a POST body and never appears in a URL at all.
+ */
+export const passwordPage = (
+  locale: Locale,
+  token: string,
+  wrongPassword: boolean
+) => {
   const t = STRINGS[locale];
   return shell(
     locale,
@@ -121,26 +143,16 @@ export const passwordPage = (locale: Locale, wrongPassword: boolean) => {
     "password",
     html`<h1>${t.passwordTitle}</h1>
       <p>${t.passwordBody}</p>
-      <form id="f">
-        <input id="pw" type="password" placeholder="${t.passwordPlaceholder}" autofocus />
+      <form method="post" action="/s/${token}">
+        <input
+          type="password"
+          name="password"
+          placeholder="${t.passwordPlaceholder}"
+          autocomplete="off"
+          autofocus
+        />
         ${wrongPassword ? html`<div class="err">${t.passwordWrong}</div>` : ""}
         <button type="submit">${t.passwordSubmit}</button>
-      </form>
-      <script>
-        // The password never leaves the browser in plaintext: it is hashed
-        // client-side and compared against the stored SHA-256 server-side.
-        document.getElementById("f").addEventListener("submit", async (e) => {
-          e.preventDefault();
-          const value = document.getElementById("pw").value;
-          const digest = await crypto.subtle.digest(
-            "SHA-256",
-            new TextEncoder().encode(value)
-          );
-          const hex = [...new Uint8Array(digest)]
-            .map((b) => b.toString(16).padStart(2, "0"))
-            .join("");
-          location.search = "?p=" + hex;
-        });
-      </script>`
+      </form>`
   );
 };

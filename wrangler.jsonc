@@ -29,21 +29,34 @@
     },
   ],
   // Declaration only — values live in `.dev.vars` locally and in the secret
-  // store in production. Missing it fails `wrangler deploy` outright, which
+  // store in production. Missing one fails `wrangler deploy` outright, which
   // beats deploying fine and only breaking at the first login attempt.
+  // JWT_SECRET must be random bytes, not a password you chose: it is an HMAC
+  // key, and a guessable one turns any captured session token into an offline
+  // dictionary attack (RFC 8725 §3.5).
   "secrets": {
-    "required": ["ADMIN_PASSWORD"],
+    "required": ["ADMIN_PASSWORD", "JWT_SECRET"],
   },
-  // There is one password and it doubles as the JWT signing key, so an
-  // unthrottled /api/login is the whole attack surface. This is the platform's
-  // own rate limiter (per colo, no storage, no billing); `namespace_id` is a
-  // local label and `period` accepts only 10 or 60.
+  // Both limiters guard a single short secret typed by a human, which is the
+  // only thing standing between a guesser and the content behind it. This is
+  // the platform's own rate limiter (per colo, no storage, no billing);
+  // `namespace_id` is a local label and `period` accepts only 10 or 60.
   "ratelimits": [
     {
       "name": "LOGIN_LIMITER",
       "namespace_id": "1001",
       "simple": {
         "limit": 5,
+        "period": 60,
+      },
+    },
+    {
+      // Keyed by IP *and* share token, so guessing at one link never locks a
+      // visitor out of another.
+      "name": "SHARE_LIMITER",
+      "namespace_id": "1002",
+      "simple": {
+        "limit": 10,
         "period": 60,
       },
     },

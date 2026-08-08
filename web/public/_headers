@@ -1,0 +1,14 @@
+# Response headers for the static assets (the dashboard). Cloudflare's asset
+# router reads this file; it does NOT apply to anything the Worker renders
+# itself, so the share pages set their own headers in worker/src/routes/shares.ts.
+#
+# The session token lives in localStorage, which means any script that runs on
+# this origin can read it. The dashboard loads nothing from anywhere else, so
+# locking script-src to 'self' with no inline scripts is what keeps that from
+# mattering. `style-src` still allows inline styles because the UI toolkit
+# emits them.
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+  Permissions-Policy: camera=(), microphone=(), geolocation=()

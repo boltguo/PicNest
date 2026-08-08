@@ -1,13 +1,27 @@
-import { Surface, cn } from "@heroui/react";
+import { Surface, cn, toast } from "@heroui/react";
 import { ImagePlus } from "lucide-react";
 import { useDropzone } from "react-dropzone";
 import { useTranslation } from "react-i18next";
+import { ACCEPTED_IMAGE_TYPES, MAX_UPLOAD_BYTES } from "../lib/api";
 
 export function UploadDropzone({ onFiles }: { onFiles: (files: File[]) => void }) {
   const { t } = useTranslation();
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
-    accept: { "image/*": [] },
-    onDrop: onFiles,
+    // Same allow-list and ceiling the Worker enforces, so a file it would
+    // turn down is named right here instead of after a 32 MB round trip.
+    accept: ACCEPTED_IMAGE_TYPES,
+    maxSize: MAX_UPLOAD_BYTES,
+    onDrop: (accepted, rejected) => {
+      for (const { file, errors } of rejected) {
+        const tooLarge = errors.some((e) => e.code === "file-too-large");
+        toast.danger(
+          t(tooLarge ? "upload.tooLargeToast" : "upload.wrongTypeToast", {
+            name: file.name,
+          })
+        );
+      }
+      if (accepted.length > 0) onFiles(accepted);
+    },
   });
 
   return (
