@@ -87,8 +87,22 @@ export function detectImage(body: ArrayBuffer): ImageFormat | null {
   return null;
 }
 
+const FORMATS = [JPEG, PNG, GIF, WEBP, AVIF];
+
 /** Every extension any accepted format answers to. */
-const IMAGE_EXTENSIONS = [JPEG, PNG, GIF, WEBP, AVIF].flatMap((f) => f.aliases);
+const IMAGE_EXTENSIONS = FORMATS.flatMap((f) => f.aliases);
+
+/**
+ * The format an object key names. Keys are minted from `detectImage`, so this
+ * recovers the sniffed format later — during a rename, say — without holding
+ * the bytes again.
+ */
+export function formatForKey(key: string): ImageFormat | null {
+  const dot = key.lastIndexOf(".");
+  if (dot === -1) return null;
+  const ext = key.slice(dot).toLowerCase();
+  return FORMATS.find((f) => f.aliases.includes(ext)) ?? null;
+}
 
 /**
  * Give the display name an extension that matches what the file turned out to

@@ -1,6 +1,6 @@
 import { inArray } from "drizzle-orm";
 import { Hono } from "hono";
-import { RESERVED_PREFIX } from "../config";
+import { CONTENT_KEY_RE } from "../config";
 import { createDb, files } from "../db";
 import { requireAuth } from "../lib/auth";
 import { chunk, insertFileRow } from "../lib/files";
@@ -9,6 +9,15 @@ import type { AppEnv } from "../types";
 
 /** Keep well under D1's bound-parameter limit per statement. */
 const D1_BATCH = 50;
+
+/**
+ * Objects imported per call. Each one costs a folder insert, at least one
+ * name lookup and the row insert, against 50 D1 queries per invocation on the
+ * free plan — so an unbounded loop over a bucket that drifted badly would fail
+ * partway through and look like corruption. The work is idempotent; the
+ * response says how much is left so the caller can just run it again.
+ */
+const IMPORT_LIMIT = 10;
 
 interface ObjectMeta {
   size: number;
@@ -20,18 +29,15 @@ interface ObjectMeta {
 }
 
 /**
- * Recover a display name and folder for an object that has no row.
- * Object keys are content hashes and carry no such information, so the
- * customMetadata written at upload time is the only source — falling back
- * to the key itself keeps objects added out of band importable.
+ * Recover a display name and folder for an object that has no row. A content
+ * key is a hash and an extension — it carries neither — so the customMetadata
+ * written at upload time is the only source. Without it the object still
+ * imports, into the root and under its own key.
  */
 function metaFor(key: string, custom: Record<string, string> | undefined) {
-  const slash = key.lastIndexOf("/");
-  const fallbackFolder = slash === -1 ? "" : key.slice(0, slash);
-  const fallbackName = slash === -1 ? key : key.slice(slash + 1);
-  const folder = custom?.folder ?? fallbackFolder;
+  const folder = custom?.folder ?? "";
   return {
-    name: sanitizeFileName(custom?.name ?? fallbackName),
+    name: sanitizeFileName(custom?.name ?? key),
     folder: folderSchema.safeParse(folder).success ? folder : "",
   };
 }
@@ -51,6 +57,9 @@ export const systemRoutes = new Hono<AppEnv>()
    * you your images back under their original names, and cannot give you back
    * renames, moves, the second folder a deduplicated image was filed in, or
    * any share link. Point-in-time recovery of that metadata is D1 Time Travel.
+   *
+   * Imports are batched to stay inside one invocation's query budget; call it
+   * again while the response still reports `remaining`.
    */
   .post("/api/repair", requireAuth, async (c) => {
     const db = createDb(c.env.DB);
@@ -63,7 +72,11 @@ export const systemRoutes = new Hono<AppEnv>()
         include: ["httpMetadata", "customMetadata"],
       });
       for (const o of res.objects) {
-        if (o.key.startsWith(RESERVED_PREFIX)) continue;
+        // Only PicNest's own content-addressed keys. Anything else in the
+        // bucket — a backup written by hand, a future internal export — would
+        // become a card that `/f/` then refuses to serve, since the public
+        // route matches the same pattern. A broken row is worse than no row.
+        if (!CONTENT_KEY_RE.test(o.key)) continue;
         objects.set(o.key, {
           size: o.size,
           mime: o.httpMetadata?.contentType ?? "application/octet-stream",
@@ -82,8 +95,9 @@ export const systemRoutes = new Hono<AppEnv>()
     const missing = [...objects.entries()].filter(
       ([key]) => !indexedKeys.has(key)
     );
-    for (const [, meta] of missing) await ensureFolders(db, meta.folder);
-    for (const [key, meta] of missing) {
+    const batch = missing.slice(0, IMPORT_LIMIT);
+    for (const [, meta] of batch) await ensureFolders(db, meta.folder);
+    for (const [key, meta] of batch) {
       await insertFileRow(
         db,
         {
@@ -108,8 +122,10 @@ export const systemRoutes = new Hono<AppEnv>()
     }
 
     return c.json({
-      imported: missing.length,
+      imported: batch.length,
       removed: orphaned.length,
       objects: objects.size,
+      /** Objects still waiting for a row. Run repair again to take the next batch. */
+      remaining: missing.length - batch.length,
     });
   });

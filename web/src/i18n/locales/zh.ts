@@ -100,6 +100,7 @@ const zh: typeof en = {
     confirm: "保存",
     saved: "已保存",
     failed: "保存失败",
+    conflict: "目标文件夹里已经有这张图片了",
     noFolders: "还没有文件夹，先创建一个再把文件移进去。",
   },
   sort: {

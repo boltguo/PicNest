@@ -1,11 +1,11 @@
 import { zValidator } from "@hono/zod-validator";
-import { eq, or, sql } from "drizzle-orm";
+import { eq, or } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import { createDb, files, folders } from "../db";
 import { requireAuth } from "../lib/auth";
 import { deleteFileRows } from "../lib/files";
-import { ensureFolders, folderPathSchema, subtreePattern } from "../lib/paths";
+import { descendantOf, ensureFolders, folderPathSchema } from "../lib/paths";
 import type { AppEnv } from "../types";
 
 export const folderRoutes = new Hono<AppEnv>()
@@ -39,23 +39,16 @@ export const folderRoutes = new Hono<AppEnv>()
     async (c) => {
       const { path } = c.req.valid("query");
       const db = createDb(c.env.DB);
-      const pattern = subtreePattern(path);
 
       const deletedFiles = await deleteFileRows(
         db,
         c.env.BUCKET,
-        or(
-          eq(files.folder, path),
-          sql`${files.folder} LIKE ${pattern} ESCAPE '\\'`
-        )
+        or(eq(files.folder, path), descendantOf(files.folder, path))
       );
       await db
         .delete(folders)
         .where(
-          or(
-            eq(folders.path, path),
-            sql`${folders.path} LIKE ${pattern} ESCAPE '\\'`
-          )
+          or(eq(folders.path, path), descendantOf(folders.path, path))
         );
 
       return c.json({ ok: true, deletedFiles });

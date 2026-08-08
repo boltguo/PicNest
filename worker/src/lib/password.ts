@@ -17,6 +17,16 @@ import { SHARE_PBKDF2_ITERATIONS } from "../config";
 const SCHEME = "pbkdf2-sha256";
 const SALT_BYTES = 16;
 const KEY_BITS = 256;
+const KEY_BYTES = KEY_BITS / 8;
+
+/**
+ * Bounds on the iteration count read back out of a record. The lower one keeps
+ * a tampered row from downgrading the work factor to nothing; the upper one
+ * keeps it from asking for a derivation that burns the CPU budget and takes
+ * the request down with it.
+ */
+const MIN_ITERATIONS = 1_000;
+const MAX_ITERATIONS = 1_000_000;
 
 const encode = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes));
 const decode = (text: string) =>
@@ -48,17 +58,44 @@ export async function hashPassword(password: string): Promise<string> {
   return [SCHEME, SHARE_PBKDF2_ITERATIONS, encode(salt), encode(hash)].join("$");
 }
 
-/** False for anything that does not parse, so a corrupt row denies access. */
+/**
+ * False for anything that does not parse, so a corrupt row denies access
+ * rather than throwing. Every field is checked before it reaches WebCrypto:
+ * `atob` raises on malformed base64, and an unbounded iteration count read
+ * from the record would be a way to make one request spin.
+ */
 export async function verifyPassword(
   password: string,
   stored: string
 ): Promise<boolean> {
-  const [scheme, iterations, salt, hash] = stored.split("$");
-  if (scheme !== SCHEME || !salt || !hash) return false;
+  const parts = stored.split("$");
+  if (parts.length !== 4) return false;
+  const [scheme, iterations, salt, hash] = parts;
+  if (scheme !== SCHEME) return false;
 
   const rounds = Number(iterations);
-  if (!Number.isInteger(rounds) || rounds < 1) return false;
+  if (
+    !Number.isInteger(rounds) ||
+    rounds < MIN_ITERATIONS ||
+    rounds > MAX_ITERATIONS
+  ) {
+    return false;
+  }
 
-  const derived = await derive(password, decode(salt), rounds);
-  return timingSafeEqual(encode(derived), hash);
+  let saltBytes: Uint8Array;
+  let hashBytes: Uint8Array;
+  try {
+    saltBytes = decode(salt);
+    hashBytes = decode(hash);
+  } catch {
+    return false;
+  }
+  if (saltBytes.length !== SALT_BYTES || hashBytes.length !== KEY_BYTES) {
+    return false;
+  }
+
+  const derived = await derive(password, saltBytes, rounds);
+  // Both sides re-encoded here, so a record written with non-canonical base64
+  // still compares on the bytes it decodes to.
+  return timingSafeEqual(encode(derived), encode(hashBytes));
 }

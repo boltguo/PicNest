@@ -1,5 +1,6 @@
 import { html, raw } from "hono/html";
 import type { HtmlEscapedString } from "hono/utils/html";
+import { MAX_SHARE_PASSWORD_LENGTH } from "../config";
 import type { Locale } from "../lib/locale";
 
 /** Strings for server-rendered share pages, keyed by locale. */
@@ -148,6 +149,7 @@ export const passwordPage = (
           type="password"
           name="password"
           placeholder="${t.passwordPlaceholder}"
+          maxlength="${MAX_SHARE_PASSWORD_LENGTH}"
           autocomplete="off"
           autofocus
         />

@@ -101,6 +101,7 @@ export default {
     confirm: "Save",
     saved: "File updated",
     failed: "Could not update the file",
+    conflict: "That folder already holds this image",
     noFolders: "No folders yet — create one to move files into.",
   },
   sort: {

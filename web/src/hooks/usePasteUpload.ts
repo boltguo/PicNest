@@ -1,5 +1,5 @@
 import { toast } from "@heroui/react";
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { ACCEPTED_IMAGE_TYPES, MAX_UPLOAD_BYTES } from "../lib/api";
 
@@ -49,9 +49,12 @@ export function usePasteUpload(onFiles: (files: File[]) => void) {
   const { t } = useTranslation();
 
   // The caller passes an inline closure over the current folder, so keep the
-  // listener registered once and read the latest one through a ref.
+  // listener registered once and read the latest one through a ref. Updated in
+  // a layout effect rather than a passive one: the closure names the folder a
+  // paste uploads into, and it should be current the moment the new folder is
+  // on screen, not one scheduling hop later.
   const latest = useRef(onFiles);
-  useEffect(() => {
+  useLayoutEffect(() => {
     latest.current = onFiles;
   });
 

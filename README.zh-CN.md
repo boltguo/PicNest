@@ -122,6 +122,9 @@ flowchart LR
 [D1 Time Travel](https://developers.cloudflare.com/d1/reference/time-travel/) 恢复到
 某个时间点 —— 免费计划 7 天，付费计划 30 天。
 
+repair 只认 PicNest 自己的内容寻址 key，并且每次最多导入十个对象，以免超出单次调用的
+查询预算。只要返回里的 `remaining` 还不是 0，就再跑一次。
+
 ### 安全
 
 - 登录限流：每 IP 每分钟 5 次，在边缘拦；输入分享密码限流：每 IP 每条链接每分钟 10 次。

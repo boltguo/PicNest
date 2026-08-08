@@ -1,6 +1,11 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql, type AnyColumn } from "drizzle-orm";
 import { z } from "zod";
-import { NAME_COLLISION_ATTEMPTS, RESERVED_PREFIX } from "../config";
+import {
+  MAX_FOLDER_DEPTH,
+  NAME_COLLISION_ATTEMPTS,
+  RANDOM_NAME_ATTEMPTS,
+  RESERVED_PREFIX,
+} from "../config";
 import { files, folders, type Db } from "../db";
 import type { ImageFormat } from "./image";
 
@@ -34,7 +39,9 @@ export const folderSchema = z
   .refine(
     (p) =>
       p === "" ||
-      (!p.startsWith(RESERVED_PREFIX) && p.split("/").every(isValidSegment)),
+      (!p.startsWith(RESERVED_PREFIX) &&
+        p.split("/").length <= MAX_FOLDER_DEPTH &&
+        p.split("/").every(isValidSegment)),
     "invalid folder path"
   );
 
@@ -70,10 +77,21 @@ export async function ensureFolders(db: Db, path: string): Promise<void> {
 export const contentKey = (hash: string, format: ImageFormat) =>
   hash + format.extension;
 
+/** Six hex characters — enough that three tries practically never all miss. */
+const randomSuffix = () =>
+  [...crypto.getRandomValues(new Uint8Array(3))]
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+
 /**
  * Resolve a collision-free display name inside `folder` by appending
  * `-2`, `-3`, ... before the extension. Names no longer affect storage,
  * but two identically named cards in one folder are confusing.
+ *
+ * Every attempt is a D1 query against a 50-per-invocation budget on the free
+ * plan, so the sequential run is short and then gives up on tidy numbering:
+ * a folder that already holds five `photo-N.png` is not worth another forty
+ * round trips to discover that the answer is `photo-47.png`.
  */
 export async function resolveUniqueName(
   db: Db,
@@ -84,18 +102,56 @@ export async function resolveUniqueName(
   const stem = dot > 0 ? name.slice(0, dot) : name;
   const ext = dot > 0 ? name.slice(dot) : "";
 
-  for (let i = 1; i <= NAME_COLLISION_ATTEMPTS; i++) {
-    const candidate = i === 1 ? name : `${stem}-${i}${ext}`;
-    const existing = await db
+  const isFree = async (candidate: string) =>
+    !(await db
       .select({ id: files.id })
       .from(files)
       .where(and(eq(files.folder, folder), eq(files.name, candidate)))
-      .get();
-    if (!existing) return candidate;
+      .get());
+
+  for (let i = 1; i <= NAME_COLLISION_ATTEMPTS; i++) {
+    const candidate = i === 1 ? name : `${stem}-${i}${ext}`;
+    if (await isFree(candidate)) return candidate;
+  }
+  for (let i = 0; i < RANDOM_NAME_ATTEMPTS; i++) {
+    const candidate = `${stem}-${randomSuffix()}${ext}`;
+    if (await isFree(candidate)) return candidate;
   }
   throw new Error("could not resolve a unique name");
 }
 
-/** SQL LIKE pattern matching everything under a folder (escapes % and _). */
-export const subtreePattern = (path: string) =>
-  `${path.replace(/[%_]/g, (ch) => `\\${ch}`)}/%`;
+/**
+ * Matches every path strictly under `parent` — the subtree, not `parent`
+ * itself.
+ *
+ * Deliberately not `LIKE 'parent/%'`, which was wrong three separate ways:
+ *
+ *  - SQLite's LIKE ignores ASCII case, so `Photos` and `photos` matched each
+ *    other. Recursive delete is built on this predicate, which made deleting
+ *    one folder capable of taking an unrelated one's files with it.
+ *  - D1 caps a LIKE pattern at 50 bytes while a folder path may be 512
+ *    characters. At three UTF-8 bytes per CJK character the cap arrives around
+ *    sixteen characters of Chinese path, and past it SQLite raises instead of
+ *    matching nothing — so listing a folder returned a 500, not an empty card.
+ *  - The pattern had to escape `%` and `_` out of the user's folder names.
+ *
+ * A prefix comparison has none of those. `substr`/`length` are evaluated by
+ * SQLite, which counts characters; the old code passed JavaScript's `.length`
+ * into `substr` and the two disagree outside the BMP (`📷` is one character
+ * but two UTF-16 units), which silently mis-sliced emoji folder names.
+ * `COLLATE BINARY` is the default for these operands and is stated anyway,
+ * because case-insensitivity is exactly the bug being fixed.
+ */
+export function descendantOf(column: AnyColumn, parent: string) {
+  const prefix = `${parent}/`;
+  return sql`substr(${column}, 1, length(${prefix})) = ${prefix} COLLATE BINARY`;
+}
+
+/**
+ * The part of a descendant path that comes after `parent/`, as SQL. Same
+ * character-vs-UTF-16 reasoning as above: SQLite measures the prefix.
+ */
+export function relativeTo(column: AnyColumn, parent: string) {
+  if (parent === "") return sql`${column}`;
+  return sql`substr(${column}, length(${`${parent}/`}) + 1)`;
+}

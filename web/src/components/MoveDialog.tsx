@@ -10,6 +10,7 @@ import {
   toast,
 } from "@heroui/react";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { isAxiosError } from "axios";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api, type FileInfo } from "../lib/api";
@@ -67,7 +68,14 @@ export function MoveDialog({ file, onClose, onMoved }: MoveDialogProps) {
       onMoved(folder);
       onClose();
     },
-    onError: () => toast.danger(t("move.failed")),
+    // 409 is the one failure the user can act on: the same image is already
+    // filed there. Saying so beats a generic "could not update".
+    onError: (error) =>
+      toast.danger(
+        isAxiosError(error) && error.response?.status === 409
+          ? t("move.conflict")
+          : t("move.failed")
+      ),
   });
 
   const options = [ROOT, ...(folders ?? [])];

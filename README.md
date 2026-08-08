@@ -128,6 +128,10 @@ was filed in, or any share link. For that, use
 [D1 Time Travel](https://developers.cloudflare.com/d1/reference/time-travel/) —
 7 days of point-in-time restore on the free plan, 30 on paid.
 
+Repair only touches PicNest's own content-addressed keys, and imports at most
+ten objects per call so it stays inside one Worker invocation's query budget.
+Run it again while the response still reports a non-zero `remaining`.
+
 ### Security
 
 - Login is limited to 5 attempts per minute per IP, at the edge; entering a

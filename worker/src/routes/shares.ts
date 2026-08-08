@@ -196,15 +196,25 @@ export const shareRoutes = new Hono<AppEnv>()
       );
     }
 
-    c.executionCtx.waitUntil(
-      db
-        .update(shares)
-        .set({ visits: sql`${shares.visits} + 1` })
-        .where(eq(shares.id, row.id))
-    );
     // The row is already loaded here, so prefer D1's name over the object's
     // customMetadata copy — a rename since upload is reflected immediately.
-    return serveObject(c.env.BUCKET, row.key, { fileName: row.name });
+    const response = await serveObject(c.env.BUCKET, row.key, {
+      fileName: row.name,
+    });
+
+    // Counted after the object is known to exist: a share whose bytes went
+    // missing answers 404, and a 404 is not someone opening the image. The
+    // write is a real D1 query but it never blocks the response, and share
+    // views are the rarest traffic this app sees.
+    if (response.ok) {
+      c.executionCtx.waitUntil(
+        db
+          .update(shares)
+          .set({ visits: sql`${shares.visits} + 1` })
+          .where(eq(shares.id, row.id))
+      );
+    }
+    return response;
   })
 
   /**

@@ -1,20 +1,22 @@
 import { zValidator } from "@hono/zod-validator";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
 import { CONTENT_KEY_RE, MAX_UPLOAD_BYTES } from "../config";
 import { createDb, files, folders, type Db } from "../db";
 import { requireAuth } from "../lib/auth";
 import { deleteFileRows, insertFileRow, isKeyTaken } from "../lib/files";
 import { sha256Hex } from "../lib/hash";
-import { detectImage, withImageExtension } from "../lib/image";
+import { detectImage, formatForKey, withImageExtension } from "../lib/image";
 import {
   contentKey,
+  descendantOf,
   ensureFolders,
   folderSchema,
+  relativeTo,
   resolveUniqueName,
   sanitizeFileName,
-  subtreePattern,
 } from "../lib/paths";
 import { serveObject } from "../lib/r2";
 import type { AppEnv } from "../types";
@@ -61,9 +63,8 @@ async function childFolderStats(
   const scope =
     parent === ""
       ? sql`${files.folder} <> ''`
-      : sql`${files.folder} LIKE ${subtreePattern(parent)} ESCAPE '\\'`;
-  // 1-based, and `parent/` is one longer than `parent`.
-  const relative = sql`substr(${files.folder}, ${parent === "" ? 1 : parent.length + 2})`;
+      : descendantOf(files.folder, parent);
+  const relative = relativeTo(files.folder, parent);
 
   const rows = await db.all<{ child: string; key: string; total: number }>(sql`
     select child, key, total from (
@@ -188,6 +189,14 @@ export const fileRoutes = new Hono<AppEnv>()
   .put(
     "/api/upload",
     requireAuth,
+    // `Content-Length` is optional — a chunked request has none, and the
+    // handler buffers the whole body to hash it. This counts the stream and
+    // stops at the limit, so a 100 MB request (the platform's own ceiling)
+    // cannot be read into a 128 MB isolate before being rejected.
+    bodyLimit({
+      maxSize: MAX_UPLOAD_BYTES,
+      onError: (c) => c.json({ error: "payload too large" }, 413),
+    }),
     zValidator(
       "query",
       z.object({
@@ -199,17 +208,8 @@ export const fileRoutes = new Hono<AppEnv>()
       const { name: rawName, folder } = c.req.valid("query");
       const db = createDb(c.env.DB);
 
-      // Reject on the declared length first so an oversized body is never
-      // buffered; the real length is checked again once it has been read.
-      if (Number(c.req.header("Content-Length")) > MAX_UPLOAD_BYTES) {
-        return c.json({ error: "payload too large" }, 413);
-      }
-
       const body = await c.req.arrayBuffer();
       if (body.byteLength === 0) return c.json({ error: "empty body" }, 400);
-      if (body.byteLength > MAX_UPLOAD_BYTES) {
-        return c.json({ error: "payload too large" }, 413);
-      }
 
       // The signature decides, not the request header: `Content-Type` is
       // whatever the client felt like sending, and objects from this bucket
@@ -224,14 +224,35 @@ export const fileRoutes = new Hono<AppEnv>()
       const hash = await sha256Hex(body);
       const key = contentKey(hash, format);
 
-      // Same bytes already sitting in this folder: nothing to store, nothing
-      // to add. Re-dropping a file the user already has is a no-op, not a copy.
+      /**
+       * Write the bytes unless R2 already has them. Skipping the PUT saves the
+       * storage and the Class A operation, but the check has to be R2's own
+       * answer rather than "some row points at this key" — a row outliving its
+       * object is exactly the state re-uploading is supposed to repair.
+       *
+       * R2 first, then the D1 index; a failure in between leaves an unindexed
+       * object that repair picks up later, which is why the name and folder
+       * ride along as customMetadata.
+       */
+      const storeUnlessPresent = async (name: string) => {
+        if (await c.env.BUCKET.head(key)) return;
+        await c.env.BUCKET.put(key, body, {
+          httpMetadata: { contentType: format.mime },
+          customMetadata: { name, folder },
+        });
+      };
+
+      // Same bytes already sitting in this folder: nothing to add. Re-dropping
+      // a file the user already has is a no-op, not a copy — but it is also
+      // how someone fixes an image whose object went missing, so the bytes are
+      // still restored before reporting the existing row back.
       const duplicate = await db
         .select({ id: files.id, name: files.name })
         .from(files)
         .where(and(eq(files.key, key), eq(files.folder, folder)))
         .get();
       if (duplicate) {
+        await storeUnlessPresent(duplicate.name);
         return c.json({
           id: duplicate.id,
           key,
@@ -242,25 +263,7 @@ export const fileRoutes = new Hono<AppEnv>()
       }
 
       await ensureFolders(db, folder);
-
-      // The object may already exist from an upload into another folder.
-      // Skipping the PUT saves both the storage and the Class A operation —
-      // but only after R2 confirms it, because a row pointing at an object
-      // that is no longer there would produce a permanently broken image.
-      const indexed = await db
-        .select({ id: files.id })
-        .from(files)
-        .where(eq(files.key, key))
-        .get();
-      if (!indexed || !(await c.env.BUCKET.head(key))) {
-        // R2 first, then the D1 index; a failure in between leaves an
-        // unindexed object that repair picks up later — which is exactly why
-        // the name and folder ride along as customMetadata.
-        await c.env.BUCKET.put(key, body, {
-          httpMetadata: { contentType: format.mime },
-          customMetadata: { name: displayName, folder },
-        });
-      }
+      await storeUnlessPresent(displayName);
 
       try {
         const { id, name } = await insertFileRow(
@@ -314,16 +317,37 @@ export const fileRoutes = new Hono<AppEnv>()
       const db = createDb(c.env.DB);
 
       const row = await db
-        .select({ folder: files.folder, name: files.name })
+        .select({ folder: files.folder, name: files.name, key: files.key })
         .from(files)
         .where(eq(files.id, id))
         .get();
       if (!row) return c.json({ error: "not found" }, 404);
 
       const targetFolder = folder ?? row.folder;
-      const desiredName = name ? sanitizeFileName(name) : row.name;
+      // Upload guarantees the display name matches the format the sniffer
+      // found; a rename must not be the way back out of that. Renaming a PNG
+      // to `notes.html` is not dangerous — R2 supplies the content type and
+      // `/f/` serves it sandboxed and `nosniff` — but it would put a wrong
+      // extension on the file the browser writes to disk.
+      const format = formatForKey(row.key);
+      const cleaned = name ? sanitizeFileName(name) : row.name;
+      const desiredName =
+        name && format ? withImageExtension(cleaned, format) : cleaned;
+
       if (targetFolder === row.folder && desiredName === row.name) {
         return c.json({ id, folder: row.folder, name: row.name });
+      }
+
+      // The destination already holds this exact image. Merging or replacing
+      // would be a guess — this file has its own name and possibly its own
+      // share links — so the conflict goes back to the caller.
+      if (targetFolder !== row.folder) {
+        const clash = await db
+          .select({ id: files.id })
+          .from(files)
+          .where(and(eq(files.folder, targetFolder), eq(files.key, row.key)))
+          .get();
+        if (clash) return c.json({ error: "already in target folder" }, 409);
       }
 
       await ensureFolders(db, targetFolder);
@@ -331,10 +355,17 @@ export const fileRoutes = new Hono<AppEnv>()
       // rather than failing the move outright.
       const finalName = await resolveUniqueName(db, targetFolder, desiredName);
 
-      await db
-        .update(files)
-        .set({ folder: targetFolder, name: finalName })
-        .where(eq(files.id, id));
+      try {
+        await db
+          .update(files)
+          .set({ folder: targetFolder, name: finalName })
+          .where(eq(files.id, id));
+      } catch (error) {
+        // A parallel move landed the same image in the destination between
+        // the check above and this update. Same answer, just later.
+        if (!isKeyTaken(error)) throw error;
+        return c.json({ error: "already in target folder" }, 409);
+      }
 
       return c.json({ id, folder: targetFolder, name: finalName });
     }
