@@ -1,3 +1,10 @@
 # Copy to `.dev.vars` for local development.
-# In production, set it with `pnpm secret` instead.
-ADMIN_PASSWORD=changeme
+#
+# The Deploy to Cloudflare flow reads this file to learn which secrets to ask
+# for on its setup page, so the value is deliberately left empty: a default
+# here would be a default in every one-click deployment.
+#
+# ADMIN_PASSWORD doubles as the JWT signing key. A guessable password is a
+# guessable HMAC key — use a long random string, not a memorable one.
+# In production, set it with `pnpm secret`.
+ADMIN_PASSWORD=

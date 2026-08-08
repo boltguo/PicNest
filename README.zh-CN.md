@@ -1,63 +1,89 @@
-# PicNest
+<h1 align="center">PicNest</h1>
 
-自建图床，跑在 Cloudflare Workers + R2 + D1 上。
+<p align="center">
+  自建图床，跑在 Cloudflare Workers + R2 + D1 上。<br>
+  图片是你的，域名是你的，存储也是你的 —— 不用注册第三方账号，没有广告，链接不会过期。
+</p>
 
-[English](README.md)
+<p align="center">
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/boltguo/PicNest?color=blue"></a>
+  <a href="https://github.com/boltguo/PicNest/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/boltguo/PicNest"></a>
+  <a href="https://workers.cloudflare.com"><img alt="Cloudflare Workers" src="https://img.shields.io/badge/Cloudflare-Workers%20%C2%B7%20R2%20%C2%B7%20D1-F38020?logo=cloudflare&logoColor=white"></a>
+</p>
+
+<p align="center"><a href="README.md">English</a> | 简体中文</p>
+
+<p align="center">
+  <a href="https://deploy.workers.cloudflare.com/?url=https://github.com/boltguo/PicNest"><img alt="Deploy to Cloudflare" src="https://deploy.workers.cloudflare.com/button"></a>
+</p>
 
 ## 功能
 
-- 单用户密码登录（JWT，7 天）
-- 文件夹管理、面包屑导航、移动、排序
-- 拖拽上传，多文件并发，单文件进度
-- 内容寻址存储，相同内容自动去重
-- 网格浏览、灯箱预览、查看详情
-- 公开直链（缓存一年）
-- 分享链接：可设过期时间与访问密码，可查访问量、可撤销
-- 中英文界面
+- **上传** —— 拖拽、多文件并发、单文件进度
+- **整理** —— 文件夹、面包屑导航、跨文件夹移动、六种排序
+- **浏览** —— 自适应网格、灯箱预览、查看详情
+- **直链** —— `/f/<key>`，缓存一年，随便往哪贴
+- **分享链接** —— 可设过期时间与访问密码，可查访问量、可撤销
+- **自动去重** —— 内容相同的图片只存一份，上传多少次都一样
+- **一个密码** —— JWT 会话 7 天，登录在边缘限流
+- **中英双语** —— 包括对外的分享页
 
-## 快速开始
+## 部署
+
+### 一键部署
+
+点页面顶部那个按钮。Cloudflare 会把这个仓库克隆到你自己的 GitHub 账号下，替你创建
+R2 桶和 D1 数据库，在设置页问你要一个管理密码，然后部署。之后往你那份仓库推代码就会
+自动重新部署。
+
+**密码要用长的随机串。** 它同时是 JWT 的签名密钥，密码能猜中就等于会话能伪造。
+
+部署完在面板里还有两件事要做：
+
+- 把域名绑到 Worker 上。
+- 桶保持私有 —— 不开 `r2.dev` 子域，不给桶绑自定义域名。所有字节都应该经 Worker 出去。
+
+### 在本机部署
+
+```bash
+npx wrangler r2 bucket create picnest
+npx wrangler d1 create picnest   # 把 database_id 填进 wrangler.jsonc
+pnpm secret                      # 设置 ADMIN_PASSWORD
+pnpm deploy                      # 构建 + 迁移 + 发布
+```
+
+## 本地开发
 
 ```bash
 pnpm install
 cp .dev.vars.example .dev.vars   # 设置 ADMIN_PASSWORD
-pnpm dev                      # 本地 D1 迁移 + worker :8787 + vite :5173
+pnpm dev                         # worker :8787 + vite :5173
 ```
 
-打开 http://localhost:5173。Vite 把 `/api`、`/f/…`、`/s/…` 代理到 Worker。
+打开 http://localhost:5173。Vite 把 `/api`、`/f/…`、`/s/…` 代理到 Worker；
 本地 D1 与 R2 数据在 `.wrangler/state/`。
 
 ```bash
-pnpm typecheck                # worker + web
-pnpm build                    # 前端生产构建
+pnpm typecheck                   # worker + web
+pnpm db:generate                 # 改完 worker/src/db/schema.ts 之后
+pnpm db:migrate:local            # 把新迁移应用到本地
 ```
 
-## 部署
-
-```bash
-npx wrangler r2 bucket create picnest   # 创建桶
-npx wrangler d1 create picnest          # 创建数据库，把 database_id 填进 wrangler.jsonc
-pnpm db:migrate                      # 迁移到线上 D1
-pnpm secret                          # 设置 ADMIN_PASSWORD
-pnpm deploy                          # 构建前端 + 发布 Worker
-```
-
-域名绑在 Worker 上。桶保持私有：不开 `r2.dev` 子域，不绑自定义域名。
-
-## 架构
+## 工作原理
 
 ```mermaid
 flowchart LR
     subgraph browser["浏览器"]
         SPA["React SPA<br/>HeroUI · TanStack Query"]
     end
-    guest["分享接收者"]
+    guest["分享链接访问者"]
 
     subgraph edge["Cloudflare 边缘"]
         W["Worker · Hono"]
         ASSETS["静态资源<br/>web/dist"]
     end
 
-    subgraph storage["存储（私有，仅 binding 可达）"]
+    subgraph storage["存储（私有，仅通过绑定访问）"]
         R2[("R2<br/>图片字节")]
         D1[("D1 · SQLite<br/>元数据索引")]
     end
@@ -66,210 +92,70 @@ flowchart LR
     SPA -->|"/f/&lt;key&gt;"| W
     guest -->|"/s/&lt;token&gt;"| W
     W --> ASSETS
-    W -->|BUCKET binding| R2
-    W -->|DB binding| D1
+    W -->|BUCKET 绑定| R2
+    W -->|DB 绑定| D1
 ```
 
-R2 是唯一真相源，D1 是可重建的索引（`POST /api/reconcile`）。
+一个 Worker 扛下全部：React 应用作为静态资源、JSON API、图片字节，以及服务端渲染的
+分享页。图片存在 R2，它是唯一事实来源；D1 存名称、文件夹和分享链接，随时可以用
+`POST /api/reconcile` 从 R2 重建。
 
-`/api/*`、`/f/*`、`/s/*` 由 `assets.run_worker_first` 固定交给 Worker；
-不加这项，浏览器导航会先被 SPA 兜底拦下，Worker 根本不执行。其余路径落到静态资源。
-
-### 存储约定
-
-| 项 | 规则 |
-| --- | --- |
-| R2 object key | `SHA-256(内容)[0:24] + 扩展名`，文件名不参与 |
-| key 唯一性 | 非唯一。相同内容 = 一个对象，多条记录 |
-| 行标识符 | `id`。`key` 不是 |
-| 原始名称 / 文件夹 | 存 D1；同时写入 R2 `customMetadata` 供 reconcile 使用 |
-| 同名冲突 | 同文件夹内追加 `-2`、`-3`（数据库唯一索引兜底） |
-| 删除对象 | 引用计数归零才删（`deleteFileRows`） |
-| 移动 / 重命名 | 仅 `UPDATE files`，不产生 R2 操作 |
-| 下载文件名 | `Content-Disposition: inline` 带 `filename*=UTF-8''…` |
-| 缓存 | `/f/` → `max-age=31536000, immutable`；`/s/` → `no-store` |
-| 允许类型 | 仅 `image/*`，其余返回 415 |
-| 单文件上限 | 32 MB，超出返回 413 |
-| 对象响应头 | `Content-Security-Policy: sandbox` + `X-Content-Type-Options: nosniff`，SVG 无法在本站域下执行脚本 |
-| 桶可见性 | 私有，仅 binding 可达 |
-
-```mermaid
-flowchart LR
-    subgraph d1["D1 · files"]
-        A["id 10<br/>folder: 2026/08<br/>name: 我的照片.jpg"]
-        B["id 11<br/>folder: backup<br/>name: 备份.jpg"]
-    end
-    K["key<br/>09811d66633162fdc71a8cd1.jpg"]
-    OBJ[("R2：一个对象<br/>customMetadata: name, folder")]
-
-    A --> K
-    B --> K
-    K --> OBJ
-```
-
-### 上传流程
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant C as 浏览器
-    participant W as Worker
-    participant D as D1
-    participant R as R2
-
-    C->>W: PUT /api/upload?name=&folder=
-    W->>W: sha256(字节) → key = hash[0:24] + 扩展名
-    W->>D: 本文件夹已有此 key？
-    alt 有
-        W-->>C: 返回已有记录，不存储
-    else 没有
-        W->>D: 其他文件夹有此 key？
-        opt 对象不存在
-            W->>R: PUT key + customMetadata
-        end
-        W->>D: INSERT files
-        W-->>C: {id, key, name, url}
-    end
-```
-
-先写 R2 后写 D1。中间失败留下未索引的对象，由 reconcile 认领。
-
-### 数据模型
-
-```mermaid
-erDiagram
-    files ||--o{ shares : "删除时级联"
-    files {
-        int id PK
-        text key "内容哈希+扩展名，非唯一"
-        text folder
-        text name "同文件夹内唯一"
-        int size
-        text mime
-        text hash "完整 sha256"
-        int width
-        int height
-        int created_at
-    }
-    folders {
-        int id PK
-        text path UK
-        int created_at
-    }
-    shares {
-        int id PK
-        text token UK
-        int file_id FK
-        text password_hash "sha256，null 表示无密码"
-        int expires_at "null 表示永不过期"
-        int visits
-        int created_at
-    }
-```
-
-分享页服务端渲染，按 `Accept-Language` 本地化。
+对象以内容哈希为 key，去重因此是免费的 —— 同一张照片传进三个文件夹，得到的是三条记录
+指向同一个对象。单文件上限 32 MB，且只收图片。
 
 ### 安全
 
-| 面 | 措施 |
-| --- | --- |
-| 登录 | 每 IP 每 60 秒 5 次，用 Workers 官方限速 binding |
-| 会话 | HS256 JWT，7 天。签名密钥就是 `ADMIN_PASSWORD`，改密码即吊销全部会话 |
-| 分享密码 | 浏览器内哈希成 SHA-256，明文不到达 Worker |
+- 登录限流：每 IP 每分钟 5 次，在边缘拦。
+- 会话是用 `ADMIN_PASSWORD` 签名的 HS256 JWT —— 改密码即吊销所有会话。
+- 分享密码在浏览器里哈希，明文不会到达 Worker。
+- 存储的字节带 `Content-Security-Policy: sandbox` 和 `nosniff` 返回，上传的 SVG
+  没法在你的域上执行脚本。
 
-`ADMIN_PASSWORD` 同时是 JWT 密钥，请用长随机串 —— 弱密码等于弱 HMAC 密钥。
+## API
 
-### 计费
+需要鉴权的接口带 `Authorization: Bearer <jwt>`。
 
-流量免费，操作计费，binding 不豁免。一次未命中缓存的看图 = 1 次 Worker 请求 + 1 次 R2 Class B。
+| 方法 | 路径 | 说明 | 鉴权 |
+| --- | --- | --- | --- |
+| POST | `/api/login` | `{password}` → `{token}` | - |
+| GET | `/api/list?folder=` | 文件夹内容 + 全局统计 | ✓ |
+| PUT | `/api/upload?name=&folder=` | body 为原始字节，按内容去重 | ✓ |
+| PATCH | `/api/file` | `{id, folder?, name?}` —— 移动 / 重命名 | ✓ |
+| DELETE | `/api/file?id=` | 删除单个文件 | ✓ |
+| GET | `/api/folders` | 所有文件夹路径 | ✓ |
+| POST | `/api/folder` | `{path}` —— 创建（幂等） | ✓ |
+| DELETE | `/api/folder?path=` | 递归删除文件夹 | ✓ |
+| POST | `/api/share` | `{id, hours?, password?}` → `{url, exp}` | ✓ |
+| GET | `/api/shares` | 分享列表与访问量 | ✓ |
+| DELETE | `/api/share?token=` | 撤销分享 | ✓ |
+| POST | `/api/reconcile` | 从 R2 重建 D1 索引 | ✓ |
+| GET | `/f/<key>` | 公开直链 | - |
+| GET | `/s/<token>` | 访问分享 | - |
 
-| 项 | 免费额度 |
+## 费用
+
+出网流量免费，操作次数不免费。一次未命中缓存的图片浏览 = 1 次 Worker 请求 + 1 次
+R2 Class B 操作。
+
+| 项目 | 免费额度 |
 | --- | --- |
 | 存储 | 10 GB |
 | Class A（put / delete / list） | 100 万 / 月 |
 | Class B（get / head） | 1000 万 / 月 |
-| 出站流量 | 无限 |
-| Worker 请求 | 免费版 10 万 / 天；付费版 1000 万 / 月 |
+| 出网流量 | 无限 |
+| Worker 请求 | 10 万 / 天 |
 
 ## 技术栈
 
 | 层 | 选型 |
 | --- | --- |
 | 运行时 | Cloudflare Workers · R2 · D1 |
-| 后端 | [Hono](https://hono.dev) · [Drizzle ORM](https://orm.drizzle.team) · hono/jwt · zod + @hono/zod-validator · nanoid |
+| 后端 | [Hono](https://hono.dev) · [Drizzle ORM](https://orm.drizzle.team) · hono/jwt · zod · nanoid |
 | 前端 | React 19 · React Router 7 · TypeScript · Vite |
 | UI | [HeroUI v3](https://heroui.com) · Tailwind CSS 4 · lucide-react |
-| 数据层 | TanStack Query · axios · zustand persist |
+| 数据层 | TanStack Query · axios · zustand |
 | 国际化 | i18next + react-i18next |
-| 表单 | react-hook-form + zod |
 
-## 目录结构
-
-```
-picnest/
-├── wrangler.jsonc           # Worker 配置（R2 + D1 binding、登录限速、SPA 资源）
-├── pnpm-workspace.yaml      # 工作区根，唯一子包是 web
-├── migrations/              # drizzle-kit 生成的 SQL 迁移
-├── drizzle.config.ts
-├── worker/src/
-│   ├── index.ts             # 应用组装、404/错误兜底
-│   ├── config.ts            # 常量
-│   ├── types.ts             # Bindings 类型
-│   ├── db/                  # Drizzle schema + client
-│   ├── lib/                 # auth · files（引用计数删除）· paths · r2 · hash · locale
-│   ├── routes/              # auth / files / folders / shares / system
-│   └── templates/           # 服务端渲染的分享页
-├── web/public/logo.svg      # 应用标识，同时用作 favicon 和分享页图标
-└── web/src/
-    ├── main.tsx             # Router / QueryClient / i18n / Toast 组装
-    ├── i18n/                # i18next 配置 + en/zh 文案
-    ├── pages/               # LoginPage · DashboardPage
-    ├── components/          # Dropzone · FileCard · FolderCard · Breadcrumb · 各类弹窗
-    ├── hooks/               # useUploads 上传队列
-    ├── lib/                 # axios 客户端 · 工具函数
-    └── store/               # zustand auth / prefs
-```
-
-## API
-
-鉴权接口需带 `Authorization: Bearer <jwt>`。文件用 `id` 定位。
-
-| 方法 | 路径 | 说明 | 鉴权 |
-| --- | --- | --- | --- |
-| POST | `/api/login` | `{password}` → `{token}` | - |
-| GET | `/api/list?folder=` | 文件夹内容 + 全局统计 | ✓ |
-| PUT | `/api/upload?name=&folder=` | 请求体为原始字节，按内容去重 | ✓ |
-| PATCH | `/api/file` | `{id, folder?, name?}` — 移动 / 重命名 | ✓ |
-| DELETE | `/api/file?id=` | 删除单个文件（引用计数） | ✓ |
-| GET | `/api/folders` | 所有文件夹路径 | ✓ |
-| POST | `/api/folder` | `{path}` — 创建（幂等） | ✓ |
-| DELETE | `/api/folder?path=` | 递归删除文件夹 | ✓ |
-| POST | `/api/share` | `{id, hours?, password?}` → `{url, exp}` | ✓ |
-| GET | `/api/shares` | 分享列表（含访问量） | ✓ |
-| DELETE | `/api/share?token=` | 撤销分享 | ✓ |
-| POST | `/api/reconcile` | 从 R2 重建 D1 索引 | ✓ |
-| GET | `/f/<key>` | 公开直链 | - |
-| GET | `/s/<token>` | 分享访问 | - |
-
-## 数据库变更
-
-```bash
-# 改 worker/src/db/schema.ts 后
-pnpm db:generate              # 生成 SQL 迁移
-pnpm db:migrate:local         # 应用到本地
-pnpm db:migrate               # 应用到线上
-```
-
-`migrations/meta/` 是 drizzle-kit 的账本：`_journal.json` 是迁移清单，
-`0000_snapshot.json` 是 diff 基线。Wrangler 不读该目录，用 D1 的 `d1_migrations` 表记录执行状态。
-
-## 路线图
-
-- [ ] 图片压缩 / 缩略图（保留 `_` key 前缀）
-- [ ] 上传时写入图片宽高（字段已存在）
-- [ ] 文件夹移动与重命名
-- [ ] 批量选择
-
-## 许可证
+## 许可
 
 [Apache-2.0](LICENSE)

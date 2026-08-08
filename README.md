@@ -1,50 +1,78 @@
-# PicNest
+<h1 align="center">PicNest</h1>
 
-Self-hosted image host on Cloudflare Workers + R2 + D1.
+<p align="center">
+  Self-hosted image host on Cloudflare Workers + R2 + D1.<br>
+  Your images, your domain, your storage — no third-party account, no ads, no link expiry.
+</p>
 
-[中文文档](README.zh-CN.md)
+<p align="center">
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/boltguo/PicNest?color=blue"></a>
+  <a href="https://github.com/boltguo/PicNest/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/boltguo/PicNest"></a>
+  <a href="https://workers.cloudflare.com"><img alt="Cloudflare Workers" src="https://img.shields.io/badge/Cloudflare-Workers%20%C2%B7%20R2%20%C2%B7%20D1-F38020?logo=cloudflare&logoColor=white"></a>
+</p>
+
+<p align="center">English | <a href="README.zh-CN.md">简体中文</a></p>
+
+<p align="center">
+  <a href="https://deploy.workers.cloudflare.com/?url=https://github.com/boltguo/PicNest"><img alt="Deploy to Cloudflare" src="https://deploy.workers.cloudflare.com/button"></a>
+</p>
 
 ## Features
 
-- Single-user password login (JWT, 7 days)
-- Folders, breadcrumb navigation, move, sorting
-- Drag & drop upload, multi-file, per-file progress
-- Content-addressed storage with automatic deduplication
-- Grid browsing, lightbox preview, file details
-- Public direct links (cached one year)
-- Share links with optional expiry and password; visit counts and revoke
-- English / Chinese UI
+- **Upload** — drag and drop, many files at once, progress per file
+- **Organize** — folders, breadcrumbs, move between folders, six sort orders
+- **Browse** — responsive grid, lightbox preview, file details
+- **Direct links** — `/f/<key>`, cached for a year, paste anywhere
+- **Share links** — optional expiry and password, visit counts, revocable
+- **Deduplication** — identical images are stored once no matter how often you upload them
+- **One password** — JWT session for 7 days, login throttled at the edge
+- **Bilingual** — English and Chinese, public share pages included
 
-## Quick start
+## Deploy
+
+### One click
+
+Use the button at the top of this page. Cloudflare clones this repo into your
+own GitHub account, creates the R2 bucket and D1 database for you, asks for an
+admin password on the setup page, and deploys. Pushes to your copy redeploy
+themselves from then on.
+
+**Pick a long random password.** It is also the JWT signing key, so a guessable
+password means forgeable sessions.
+
+Two things to do in the dashboard afterwards:
+
+- Attach your domain to the Worker.
+- Leave the bucket private — no `r2.dev` subdomain, no custom domain on the
+  bucket. Every byte should be served through the Worker.
+
+### From your machine
+
+```bash
+npx wrangler r2 bucket create picnest
+npx wrangler d1 create picnest   # paste database_id into wrangler.jsonc
+pnpm secret                      # set ADMIN_PASSWORD
+pnpm deploy                      # build + migrate + publish
+```
+
+## Local development
 
 ```bash
 pnpm install
 cp .dev.vars.example .dev.vars   # set ADMIN_PASSWORD
-pnpm dev                      # local D1 migrations + worker :8787 + vite :5173
+pnpm dev                         # worker :8787 + vite :5173
 ```
 
-Open http://localhost:5173. Vite proxies `/api`, `/f/…` and `/s/…` to the Worker.
-Local D1 and R2 data live in `.wrangler/state/`.
+Open http://localhost:5173. Vite proxies `/api`, `/f/…` and `/s/…` to the
+Worker; local D1 and R2 data live in `.wrangler/state/`.
 
 ```bash
-pnpm typecheck                # worker + web
-pnpm build                    # production frontend bundle
+pnpm typecheck                   # worker + web
+pnpm db:generate                 # after editing worker/src/db/schema.ts
+pnpm db:migrate:local            # apply the new migration locally
 ```
 
-## Deployment
-
-```bash
-npx wrangler r2 bucket create picnest   # create the bucket
-npx wrangler d1 create picnest          # create the database, paste database_id into wrangler.jsonc
-pnpm db:migrate                      # migrate remote D1
-pnpm secret                          # set ADMIN_PASSWORD
-pnpm deploy                          # build frontend + publish Worker
-```
-
-Attach your domain to the Worker. Keep the bucket private: no `r2.dev`
-subdomain, no custom domain on the bucket.
-
-## Architecture
+## How it works
 
 ```mermaid
 flowchart LR
@@ -71,174 +99,28 @@ flowchart LR
     W -->|DB binding| D1
 ```
 
-R2 is the source of truth; D1 is a rebuildable index (`POST /api/reconcile`).
+One Worker serves everything: the React app as static assets, the JSON API, the
+image bytes, and the server-rendered share pages. R2 holds the images and is the
+source of truth; D1 holds names, folders and share links, and can be rebuilt
+from R2 at any time with `POST /api/reconcile`.
 
-`/api/*`, `/f/*` and `/s/*` are pinned to the Worker via `assets.run_worker_first`;
-without it the SPA fallback answers browser navigations before the Worker runs.
-Everything else falls through to the static assets.
-
-### Storage rules
-
-| Item | Rule |
-| --- | --- |
-| R2 object key | `SHA-256(bytes)[0:24] + ext`; the file name is not part of it |
-| Key uniqueness | Not unique. Identical content = one object, many rows |
-| Row identifier | `id`. Not `key` |
-| Original name / folder | In D1; also written to R2 `customMetadata` for reconcile |
-| Name collisions | `-2`, `-3` suffix within a folder (unique index enforces it) |
-| Object deletion | Only when the reference count hits zero (`deleteFileRows`) |
-| Move / rename | `UPDATE files` only; no R2 operation |
-| Download filename | `Content-Disposition: inline` with `filename*=UTF-8''…` |
-| Caching | `/f/` → `max-age=31536000, immutable`; `/s/` → `no-store` |
-| Accepted types | `image/*` only; anything else is rejected with 415 |
-| Max upload | 32 MB; larger bodies are rejected with 413 |
-| Served bytes | `Content-Security-Policy: sandbox` + `X-Content-Type-Options: nosniff`, so a stored SVG cannot script this origin |
-| Bucket visibility | Private, reachable only through the binding |
-
-```mermaid
-flowchart LR
-    subgraph d1["D1 · files"]
-        A["id 10<br/>folder: 2026/08<br/>name: photo.jpg"]
-        B["id 11<br/>folder: backup<br/>name: copy.jpg"]
-    end
-    K["key<br/>09811d66633162fdc71a8cd1.jpg"]
-    OBJ[("R2: one object<br/>customMetadata: name, folder")]
-
-    A --> K
-    B --> K
-    K --> OBJ
-```
-
-### Upload flow
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant C as Browser
-    participant W as Worker
-    participant D as D1
-    participant R as R2
-
-    C->>W: PUT /api/upload?name=&folder=
-    W->>W: sha256(bytes) → key = hash[0:24] + ext
-    W->>D: key already in this folder?
-    alt yes
-        W-->>C: existing row, nothing stored
-    else no
-        W->>D: key in another folder?
-        opt object absent
-            W->>R: PUT key + customMetadata
-        end
-        W->>D: INSERT files
-        W-->>C: {id, key, name, url}
-    end
-```
-
-R2 is written before D1. A failure in between leaves an unindexed object, which
-reconcile claims later.
-
-### Data model
-
-```mermaid
-erDiagram
-    files ||--o{ shares : "cascade on delete"
-    files {
-        int id PK
-        text key "content hash + ext, NOT unique"
-        text folder
-        text name "unique within folder"
-        int size
-        text mime
-        text hash "full sha256"
-        int width
-        int height
-        int created_at
-    }
-    folders {
-        int id PK
-        text path UK
-        int created_at
-    }
-    shares {
-        int id PK
-        text token UK
-        int file_id FK
-        text password_hash "sha256, null = open"
-        int expires_at "null = never"
-        int visits
-        int created_at
-    }
-```
-
-Share pages are server-rendered and localized via `Accept-Language`.
+Objects are keyed by the hash of their contents, which is what makes
+deduplication free — upload the same photo into three folders and you get three
+rows pointing at one object. Uploads are capped at 32 MB and must be images.
 
 ### Security
 
-| Surface | Control |
-| --- | --- |
-| Login | 5 attempts per 60s per IP, via the Workers rate limiting binding |
-| Session | HS256 JWT, 7 days. The signing key is `ADMIN_PASSWORD`, so rotating the password revokes every session |
-| Share password | SHA-256 in the browser; plaintext never reaches the Worker |
-
-`ADMIN_PASSWORD` doubles as the JWT key. Use a long random one — a weak password
-is also a weak HMAC key.
-
-### Billing
-
-Egress is free, operations are not, and bindings get no exemption. One image
-view that misses cache = 1 Worker request + 1 R2 Class B operation.
-
-| Item | Free tier |
-| --- | --- |
-| Storage | 10 GB |
-| Class A (put / delete / list) | 1M / month |
-| Class B (get / head) | 10M / month |
-| Egress | Unlimited |
-| Worker requests | 100k / day free; 10M / month paid |
-
-## Stack
-
-| Layer | Choice |
-| --- | --- |
-| Runtime | Cloudflare Workers · R2 · D1 |
-| Backend | [Hono](https://hono.dev) · [Drizzle ORM](https://orm.drizzle.team) · hono/jwt · zod + @hono/zod-validator · nanoid |
-| Frontend | React 19 · React Router 7 · TypeScript · Vite |
-| UI | [HeroUI v3](https://heroui.com) · Tailwind CSS 4 · lucide-react |
-| Data layer | TanStack Query · axios · zustand persist |
-| i18n | i18next + react-i18next |
-| Forms | react-hook-form + zod |
-
-## Directory layout
-
-```
-picnest/
-├── wrangler.jsonc           # Worker config (R2 + D1 bindings, rate limit, SPA assets)
-├── pnpm-workspace.yaml      # Workspace root; `web` is the only package
-├── migrations/              # SQL migrations generated by drizzle-kit
-├── drizzle.config.ts
-├── worker/src/
-│   ├── index.ts             # App assembly, 404/error fallbacks
-│   ├── config.ts            # Constants
-│   ├── types.ts             # Bindings
-│   ├── db/                  # Drizzle schema + client
-│   ├── lib/                 # auth · files (refcount delete) · paths · r2 · hash · locale
-│   ├── routes/              # auth / files / folders / shares / system
-│   └── templates/           # Server-rendered share pages
-├── web/public/logo.svg      # App mark; also the favicon and the share-page icon
-└── web/src/
-    ├── main.tsx             # Router / QueryClient / i18n / Toast assembly
-    ├── i18n/                # i18next setup + en/zh locales
-    ├── pages/               # LoginPage · DashboardPage
-    ├── components/          # Dropzone · FileCard · FolderCard · Breadcrumb · dialogs
-    ├── hooks/               # useUploads queue
-    ├── lib/                 # axios client · utils
-    └── store/               # zustand auth / prefs
-```
+- Login is limited to 5 attempts per minute per IP, at the edge.
+- The session is an HS256 JWT signed with `ADMIN_PASSWORD` — changing the
+  password revokes every session.
+- Share passwords are hashed in the browser; the plaintext never reaches the
+  Worker.
+- Stored bytes are served with `Content-Security-Policy: sandbox` and
+  `nosniff`, so an uploaded SVG cannot script your origin.
 
 ## API
 
-Authenticated endpoints require `Authorization: Bearer <jwt>`. Files are
-addressed by `id`.
+Authenticated endpoints take `Authorization: Bearer <jwt>`.
 
 | Method | Path | Description | Auth |
 | --- | --- | --- | --- |
@@ -246,7 +128,7 @@ addressed by `id`.
 | GET | `/api/list?folder=` | Folder contents + global stats | ✓ |
 | PUT | `/api/upload?name=&folder=` | Raw bytes as body; dedups by content | ✓ |
 | PATCH | `/api/file` | `{id, folder?, name?}` — move / rename | ✓ |
-| DELETE | `/api/file?id=` | Delete one file (refcounted) | ✓ |
+| DELETE | `/api/file?id=` | Delete one file | ✓ |
 | GET | `/api/folders` | Every folder path | ✓ |
 | POST | `/api/folder` | `{path}` — create (idempotent) | ✓ |
 | DELETE | `/api/folder?path=` | Delete folder recursively | ✓ |
@@ -257,25 +139,29 @@ addressed by `id`.
 | GET | `/f/<key>` | Public direct link | - |
 | GET | `/s/<token>` | Share access | - |
 
-## Database changes
+## Cost
 
-```bash
-# after editing worker/src/db/schema.ts
-pnpm db:generate              # emit a SQL migration
-pnpm db:migrate:local         # apply locally
-pnpm db:migrate               # apply to production
-```
+Egress is free; operations are not. One image view that misses cache costs
+1 Worker request + 1 R2 Class B operation.
 
-`migrations/meta/` is drizzle-kit's ledger: `_journal.json` is the migration
-list, `0000_snapshot.json` the diff baseline. Wrangler ignores that folder and
-tracks execution in D1's `d1_migrations` table.
+| Item | Free tier |
+| --- | --- |
+| Storage | 10 GB |
+| Class A (put / delete / list) | 1M / month |
+| Class B (get / head) | 10M / month |
+| Egress | Unlimited |
+| Worker requests | 100k / day |
 
-## Roadmap
+## Stack
 
-- [ ] Image compression / thumbnails (reserved `_` key prefix)
-- [ ] Store intrinsic width/height at upload (columns exist)
-- [ ] Move and rename folders
-- [ ] Bulk selection
+| Layer | Choice |
+| --- | --- |
+| Runtime | Cloudflare Workers · R2 · D1 |
+| Backend | [Hono](https://hono.dev) · [Drizzle ORM](https://orm.drizzle.team) · hono/jwt · zod · nanoid |
+| Frontend | React 19 · React Router 7 · TypeScript · Vite |
+| UI | [HeroUI v3](https://heroui.com) · Tailwind CSS 4 · lucide-react |
+| Data layer | TanStack Query · axios · zustand |
+| i18n | i18next + react-i18next |
 
 ## License
 

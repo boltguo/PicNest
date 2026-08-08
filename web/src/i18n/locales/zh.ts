@@ -30,6 +30,8 @@ const zh: typeof en = {
     stats: "{{count}} 个文件 · 已用 {{size}}",
     logout: "退出",
     language: "Switch to English",
+    source: "在 GitHub 上查看源码",
+    more: "更多",
   },
   dropzone: {
     title: "拖拽图片到这里，或点击选择",

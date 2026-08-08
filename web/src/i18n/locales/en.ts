@@ -28,6 +28,8 @@ export default {
     stats: "{{count}} files · {{size}} used",
     logout: "Sign out",
     language: "切换到中文",
+    source: "Source code on GitHub",
+    more: "More",
   },
   dropzone: {
     title: "Drag images here, or click to browse",

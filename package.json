@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "mkdir -p web/dist && pnpm db:migrate:local && concurrently -n worker,web -c blue,green \"wrangler dev\" \"pnpm -F @picnest/web dev\"",
     "build": "pnpm -F @picnest/web build",
-    "deploy": "pnpm build && wrangler deploy",
+    "deploy": "pnpm build && pnpm db:migrate && wrangler deploy",
     "typecheck": "tsc -p worker && pnpm -F @picnest/web typecheck",
     "secret": "wrangler secret put ADMIN_PASSWORD",
     "db:generate": "drizzle-kit generate",

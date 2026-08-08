@@ -21,12 +21,19 @@
     {
       "binding": "DB",
       "database_name": "picnest",
-      // Replace with the real id from `wrangler d1 create picnest` before deploying.
-      // Local dev (`wrangler dev`) uses a local SQLite file and ignores this id.
+      // Placeholder id. `wrangler d1 create picnest` gives you the real one; the
+      // Deploy to Cloudflare flow provisions the database and writes it back
+      // here itself. Local dev (`wrangler dev`) uses a SQLite file and ignores it.
       "database_id": "00000000-0000-0000-0000-000000000000",
       "migrations_dir": "migrations",
     },
   ],
+  // Declaration only — values live in `.dev.vars` locally and in the secret
+  // store in production. Missing it fails `wrangler deploy` outright, which
+  // beats deploying fine and only breaking at the first login attempt.
+  "secrets": {
+    "required": ["ADMIN_PASSWORD"],
+  },
   // There is one password and it doubles as the JWT signing key, so an
   // unthrottled /api/login is the whole attack surface. This is the platform's
   // own rate limiter (per colo, no storage, no billing); `namespace_id` is a

@@ -1,9 +1,11 @@
-import { Button, Skeleton, toast } from "@heroui/react";
+import { Button, Dropdown, Skeleton, buttonVariants, toast } from "@heroui/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CircleAlert,
+  Ellipsis,
   FolderOpen,
   FolderPlus,
+  Github,
   Images,
   Languages,
   Link2,
@@ -49,6 +51,9 @@ const COMPARATORS: Record<SortKey, (a: FileInfo, b: FileInfo) => number> = {
   largest: (a, b) => b.size - a.size,
   smallest: (a, b) => a.size - b.size,
 };
+
+/** Where this instance came from — every deployment is someone's own copy. */
+const SOURCE_URL = "https://github.com/boltguo/PicNest";
 
 /** Shared by the file grid and its loading skeleton so both wrap identically. */
 const FILE_GRID =
@@ -131,12 +136,15 @@ export default function DashboardPage() {
   return (
     // One flex column owns the vertical rhythm; sections carry no margins.
     <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-4 py-8 pb-16">
-      <header className="flex items-center justify-between">
-        <div className="flex items-center gap-2.5">
-          <Logo className="size-9" />
-          <div>
-            <h1 className="text-lg font-semibold">{t("app.name")}</h1>
-            <p className="text-muted mt-0.5 text-xs">
+      <header className="flex items-center justify-between gap-3">
+        {/* min-w-0 lets the title block shrink instead of shoving the actions
+            off the row; without it the stats line wraps to three lines on a
+            phone and the buttons ride over the logo. */}
+        <div className="flex min-w-0 items-center gap-2.5">
+          <Logo className="size-9 shrink-0" />
+          <div className="min-w-0">
+            <h1 className="truncate text-lg font-semibold">{t("app.name")}</h1>
+            <p className="text-muted mt-0.5 truncate text-xs">
               {data
                 ? t("header.stats", {
                     count: data.count,
@@ -146,11 +154,9 @@ export default function DashboardPage() {
             </p>
           </div>
         </div>
-        <div className="flex gap-2">
-          <Button size="sm" variant="tertiary" onPress={() => setSharesOpen(true)}>
-            <Link2 className="size-3.5" aria-hidden />
-            {t("share.manage")}
-          </Button>
+        {/* Three icon buttons at a fixed width. Everything that needs a word
+            to explain it lives in the overflow menu. */}
+        <div className="flex shrink-0 gap-2">
           <Button
             size="sm"
             variant="tertiary"
@@ -160,10 +166,43 @@ export default function DashboardPage() {
             <Languages className="size-3.5" aria-hidden />
             {i18n.language.startsWith("zh") ? "EN" : "中"}
           </Button>
-          <Button size="sm" variant="tertiary" onPress={logout}>
-            <LogOut className="size-3.5" aria-hidden />
-            {t("header.logout")}
-          </Button>
+          {/* A real <a>, not a Button with an onPress: middle-click and
+              "copy link" should work. buttonVariants gives it the same look. */}
+          <a
+            href={SOURCE_URL}
+            target="_blank"
+            rel="noreferrer"
+            aria-label={t("header.source")}
+            className={buttonVariants({
+              size: "sm",
+              variant: "tertiary",
+              isIconOnly: true,
+            })}
+          >
+            <Github className="size-3.5" aria-hidden />
+          </a>
+          <Dropdown>
+            <Button
+              isIconOnly
+              size="sm"
+              variant="tertiary"
+              aria-label={t("header.more")}
+            >
+              <Ellipsis className="size-3.5" />
+            </Button>
+            <Dropdown.Popover placement="bottom end">
+              <Dropdown.Menu>
+                <Dropdown.Item onAction={() => setSharesOpen(true)}>
+                  <Link2 className="size-4" aria-hidden />
+                  {t("share.manage")}
+                </Dropdown.Item>
+                <Dropdown.Item variant="danger" onAction={logout}>
+                  <LogOut className="size-4" aria-hidden />
+                  {t("header.logout")}
+                </Dropdown.Item>
+              </Dropdown.Menu>
+            </Dropdown.Popover>
+          </Dropdown>
         </div>
       </header>
 
