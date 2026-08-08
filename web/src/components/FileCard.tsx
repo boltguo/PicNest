@@ -3,12 +3,14 @@ import {
   Ellipsis,
   Eye,
   FolderInput,
+  ImageOff,
   Info,
   Link2,
   Share2,
   Trash2,
 } from "lucide-react";
 import prettyBytes from "pretty-bytes";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { fileUrl, type FileInfo } from "../lib/api";
 import { formatDate } from "../lib/utils";
@@ -33,18 +35,31 @@ export function FileCard({
   onDelete,
 }: FileCardProps) {
   const { t } = useTranslation();
+  // The object can be missing from R2 while its D1 row survives, and a broken
+  // <img> glyph in a grid of photos looks like the app failed, not the file.
+  const [broken, setBroken] = useState(false);
 
   return (
     <Card className="gap-0 overflow-hidden p-0">
       <div className="bg-default relative aspect-square overflow-hidden">
-        {/* Absolute so the intrinsic image height can't stretch the square. */}
-        <img
-          src={fileUrl(file.key)}
-          alt={file.name}
-          loading="lazy"
-          onClick={() => onPreview(file)}
-          className="absolute inset-0 size-full cursor-zoom-in object-cover"
-        />
+        {broken ? (
+          <div className="text-muted absolute inset-0 flex flex-col items-center justify-center gap-1.5">
+            <ImageOff className="size-5" aria-hidden />
+            <span className="px-3 text-center text-[11px] leading-4">
+              {t("file.unavailable")}
+            </span>
+          </div>
+        ) : (
+          /* Absolute so the intrinsic image height can't stretch the square. */
+          <img
+            src={fileUrl(file.key)}
+            alt={file.name}
+            loading="lazy"
+            onError={() => setBroken(true)}
+            onClick={() => onPreview(file)}
+            className="absolute inset-0 size-full cursor-zoom-in object-cover"
+          />
+        )}
       </div>
       {/* Name only — size and date live in the details dialog, so the row
           stays one line at any card width and nothing covers the artwork. */}

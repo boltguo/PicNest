@@ -1,6 +1,7 @@
 import {
   Button,
   Input,
+  InputGroup,
   Label,
   ListBox,
   Modal,
@@ -9,7 +10,7 @@ import {
   toast,
 } from "@heroui/react";
 import { useMutation } from "@tanstack/react-query";
-import { Copy } from "lucide-react";
+import { Copy, Link2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { absoluteUrl, api, type FileInfo } from "../lib/api";
@@ -113,10 +114,20 @@ export function ShareDialog({ file, onClose, onCreated }: ShareDialogProps) {
                 </TextField>
               </div>
             ) : (
-              <div className="flex items-end gap-2">
+              <div className="flex items-center gap-2">
+                {/* The dialog title already says this is a share link, so the
+                    field carries a link glyph instead of repeating it. The
+                    label stays for screen readers. */}
                 <TextField value={url} isReadOnly fullWidth className="flex-1">
-                  <Label>{t("share.link")}</Label>
-                  <Input onFocus={(e) => e.currentTarget.select()} />
+                  <Label className="sr-only">{t("share.link")}</Label>
+                  <InputGroup>
+                    <InputGroup.Prefix>
+                      <Link2 className="text-muted size-4" aria-hidden />
+                    </InputGroup.Prefix>
+                    <InputGroup.Input
+                      onFocus={(e) => e.currentTarget.select()}
+                    />
+                  </InputGroup>
                 </TextField>
                 <Button
                   isIconOnly

@@ -9,6 +9,13 @@ const zh: typeof en = {
     delete: "删除",
     done: "完成",
     loading: "加载中…",
+    retry: "重试",
+  },
+  error: {
+    files: "无法加载这个文件夹",
+    filesDescription: "请求没有成功，检查网络后再试一次。",
+    shares: "无法加载分享链接",
+    sharesDescription: "请求没有成功，检查网络后再试一次。",
   },
   login: {
     subtitle: "输入管理密码以继续",
@@ -51,10 +58,15 @@ const zh: typeof en = {
     deleteFailed: "删除文件夹失败",
   },
   file: {
-    empty: "还没有图片，上传第一张吧",
+    empty: "还没有图片",
+    emptyDescription: "把图片拖到上面的区域，或点击选择文件。",
     emptyFolder: "这个文件夹是空的",
+    emptyFolderDescription: "可以在这里上传，也可以从别的文件夹移动过来。",
+    unavailable: "图片无法加载",
     actions: "更多操作",
     details: "查看详情",
+    property: "属性",
+    value: "值",
     name: "名称",
     size: "大小",
     dimensions: "尺寸",
@@ -80,6 +92,7 @@ const zh: typeof en = {
     confirm: "移动",
     moved: "已移动",
     failed: "移动失败",
+    noFolders: "还没有文件夹，先创建一个再把文件移进去。",
   },
   sort: {
     newest: "最新优先",
@@ -116,6 +129,7 @@ const zh: typeof en = {
     revoked: "分享链接已撤销",
     revokeFailed: "撤销失败",
     empty: "还没有分享链接",
+    emptyDescription: "在任意图片上选择「分享…」，就能生成一条可以发出去的链接。",
   },
 };
 

@@ -1,18 +1,9 @@
-import { Button, Modal } from "@heroui/react";
+import { Button, Modal, Table } from "@heroui/react";
 import prettyBytes from "pretty-bytes";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { absoluteUrl, fileUrl, type FileInfo } from "../lib/api";
 import { formatDateTime } from "../lib/utils";
-
-function Row({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="grid grid-cols-[6.5rem_1fr] gap-3 py-1.5">
-      <dt className="text-muted">{label}</dt>
-      <dd className="text-foreground min-w-0 break-all">{children}</dd>
-    </div>
-  );
-}
 
 export function FileDetailsDialog({
   file,
@@ -36,6 +27,34 @@ export function FileDetailsDialog({
     };
   }, [file]);
 
+  const rows = file
+    ? [
+        { id: "name", label: t("file.name"), value: file.name },
+        { id: "size", label: t("file.size"), value: prettyBytes(file.size) },
+        {
+          id: "dimensions",
+          label: t("file.dimensions"),
+          value: size ? `${size.w} × ${size.h}` : "—",
+        },
+        { id: "type", label: t("file.type"), value: file.mime },
+        {
+          id: "uploaded",
+          label: t("file.uploaded"),
+          value: formatDateTime(file.uploaded),
+        },
+        {
+          id: "path",
+          label: t("file.path"),
+          value: file.folder === "" ? file.name : `${file.folder}/${file.name}`,
+        },
+        {
+          id: "link",
+          label: t("file.publicLink"),
+          value: absoluteUrl(fileUrl(file.key)),
+        },
+      ]
+    : [];
+
   return (
     <Modal.Backdrop
       isOpen={file !== null}
@@ -43,26 +62,45 @@ export function FileDetailsDialog({
       variant="blur"
     >
       <Modal.Container>
-        <Modal.Dialog className="sm:max-w-115">
+        <Modal.Dialog className="sm:max-w-150">
           <Modal.CloseTrigger />
           <Modal.Header>
             <Modal.Heading>{t("file.details")}</Modal.Heading>
           </Modal.Header>
           <Modal.Body>
             {file && (
-              <dl className="divide-default divide-y text-sm">
-                <Row label={t("file.name")}>{file.name}</Row>
-                <Row label={t("file.size")}>{prettyBytes(file.size)}</Row>
-                <Row label={t("file.dimensions")}>
-                  {size ? `${size.w} × ${size.h}` : "—"}
-                </Row>
-                <Row label={t("file.type")}>{file.mime}</Row>
-                <Row label={t("file.uploaded")}>{formatDateTime(file.uploaded)}</Row>
-                <Row label={t("file.path")}>
-                  {file.folder === "" ? file.name : `${file.folder}/${file.name}`}
-                </Row>
-                <Row label={t("file.publicLink")}>{absoluteUrl(fileUrl(file.key))}</Row>
-              </dl>
+              // Secondary: the dialog is already a white surface, so a table
+              // that paints its own would stack panel on panel.
+              <Table variant="secondary">
+                <Table.ScrollContainer>
+                  <Table.Content aria-label={t("file.details")}>
+                    <Table.Header>
+                      <Table.Column isRowHeader className="w-28">
+                        {t("file.property")}
+                      </Table.Column>
+                      {/* Takes the leftover width so the label column keeps its
+                          fixed size and never wraps mid-word. */}
+                      <Table.Column className="w-full">
+                        {t("file.value")}
+                      </Table.Column>
+                    </Table.Header>
+                    <Table.Body>
+                      {rows.map((row) => (
+                        <Table.Row key={row.id}>
+                          <Table.Cell className="text-muted whitespace-nowrap">
+                            {row.label}
+                          </Table.Cell>
+                          {/* max-w-0 is what lets a long path or URL wrap inside
+                              an auto-layout table cell instead of widening it. */}
+                          <Table.Cell className="max-w-0 break-all">
+                            {row.value}
+                          </Table.Cell>
+                        </Table.Row>
+                      ))}
+                    </Table.Body>
+                  </Table.Content>
+                </Table.ScrollContainer>
+              </Table>
             )}
           </Modal.Body>
           <Modal.Footer>

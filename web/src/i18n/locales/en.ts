@@ -7,6 +7,13 @@ export default {
     delete: "Delete",
     done: "Done",
     loading: "Loading…",
+    retry: "Try again",
+  },
+  error: {
+    files: "Could not load this folder",
+    filesDescription: "The request did not go through. Check your connection and try again.",
+    shares: "Could not load share links",
+    sharesDescription: "The request did not go through. Check your connection and try again.",
   },
   login: {
     subtitle: "Enter the admin password to continue",
@@ -50,10 +57,16 @@ export default {
     deleteFailed: "Could not delete folder",
   },
   file: {
-    empty: "No images yet — upload your first one",
+    empty: "No images yet",
+    emptyDescription: "Drop images into the area above, or click it to browse.",
     emptyFolder: "This folder is empty",
+    emptyFolderDescription:
+      "Upload here, or move images in from another folder.",
+    unavailable: "Image unavailable",
     actions: "More actions",
     details: "Details",
+    property: "Property",
+    value: "Value",
     name: "Name",
     size: "Size",
     dimensions: "Dimensions",
@@ -79,6 +92,7 @@ export default {
     confirm: "Move",
     moved: "File moved",
     failed: "Could not move the file",
+    noFolders: "No folders yet — create one to move files into.",
   },
   sort: {
     newest: "Newest",
@@ -115,5 +129,7 @@ export default {
     revoked: "Share link revoked",
     revokeFailed: "Could not revoke the link",
     empty: "No share links yet",
+    emptyDescription:
+      "Pick “Share…” on any image to create a link you can send out.",
   },
 };

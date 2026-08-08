@@ -1,12 +1,22 @@
-import { Button, toast } from "@heroui/react";
+import { Button, Skeleton, toast } from "@heroui/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FolderPlus, Languages, Link2, LogOut } from "lucide-react";
+import {
+  CircleAlert,
+  FolderOpen,
+  FolderPlus,
+  Images,
+  Languages,
+  Link2,
+  LogOut,
+  RotateCw,
+} from "lucide-react";
 import prettyBytes from "pretty-bytes";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router";
 import { Breadcrumb } from "../components/Breadcrumb";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { EmptyState } from "../components/EmptyState";
 import { FileCard } from "../components/FileCard";
 import { FileDetailsDialog } from "../components/FileDetailsDialog";
 import { FolderCard } from "../components/FolderCard";
@@ -40,6 +50,10 @@ const COMPARATORS: Record<SortKey, (a: FileInfo, b: FileInfo) => number> = {
   smallest: (a, b) => a.size - b.size,
 };
 
+/** Shared by the file grid and its loading skeleton so both wrap identically. */
+const FILE_GRID =
+  "grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-5 max-sm:grid-cols-[repeat(auto-fill,minmax(140px,1fr))] max-sm:gap-3.5";
+
 export default function DashboardPage() {
   const { t, i18n } = useTranslation();
   const logout = useAuthStore((s) => s.logout);
@@ -64,7 +78,7 @@ export default function DashboardPage() {
   const [sharesOpen, setSharesOpen] = useState(false);
   const sort = usePrefsStore((s) => s.sort);
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, refetch, isFetching } = useQuery({
     queryKey: ["files", folder],
     queryFn: () => api.list(folder),
   });
@@ -109,7 +123,7 @@ export default function DashboardPage() {
     void i18n.changeLanguage(i18n.language.startsWith("zh") ? "en" : "zh");
 
   const isEmpty =
-    data && data.folders.length === 0 && data.files.length === 0 && !isLoading;
+    !!data && data.folders.length === 0 && data.files.length === 0 && !isLoading;
 
   // Folders stay alphabetical — they are navigation, not content.
   const sortedFiles = data ? [...data.files].sort(COMPARATORS[sort]) : [];
@@ -181,26 +195,57 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {isEmpty && (
-        <p className="text-muted py-8 text-center text-[13px]">
-          {folder === "" ? t("file.empty") : t("file.emptyFolder")}
-        </p>
+      {/* Loading, failed, empty, full — exactly one of these renders, so the
+          space below the toolbar never sits blank without saying why. */}
+      {isLoading ? (
+        <div className={FILE_GRID} aria-busy aria-label={t("common.loading")}>
+          {Array.from({ length: 8 }, (_, i) => (
+            <Skeleton key={i} className="aspect-[1/1.12] rounded-xl" />
+          ))}
+        </div>
+      ) : isError ? (
+        <EmptyState
+          icon={CircleAlert}
+          title={t("error.files")}
+          description={t("error.filesDescription")}
+          action={
+            <Button
+              size="sm"
+              variant="secondary"
+              isPending={isFetching}
+              onPress={() => void refetch()}
+            >
+              <RotateCw className="size-3.5" aria-hidden />
+              {t("common.retry")}
+            </Button>
+          }
+        />
+      ) : isEmpty ? (
+        <EmptyState
+          icon={folder === "" ? Images : FolderOpen}
+          title={folder === "" ? t("file.empty") : t("file.emptyFolder")}
+          description={
+            folder === ""
+              ? t("file.emptyDescription")
+              : t("file.emptyFolderDescription")
+          }
+        />
+      ) : (
+        <div className={FILE_GRID}>
+          {sortedFiles.map((file) => (
+            <FileCard
+              key={file.id}
+              file={file}
+              onPreview={setPreview}
+              onCopyLink={copyLink}
+              onShare={setSharing}
+              onMove={setMoving}
+              onDetails={setDetails}
+              onDelete={setPendingDelete}
+            />
+          ))}
+        </div>
       )}
-
-      <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-5 max-sm:grid-cols-[repeat(auto-fill,minmax(140px,1fr))] max-sm:gap-3.5">
-        {sortedFiles.map((file) => (
-          <FileCard
-            key={file.id}
-            file={file}
-            onPreview={setPreview}
-            onCopyLink={copyLink}
-            onShare={setSharing}
-            onMove={setMoving}
-            onDetails={setDetails}
-            onDelete={setPendingDelete}
-          />
-        ))}
-      </div>
 
       <Lightbox file={preview} onClose={() => setPreview(null)} />
 

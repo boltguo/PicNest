@@ -2,6 +2,7 @@ import { zValidator } from "@hono/zod-validator";
 import { desc, eq } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { Hono } from "hono";
+import { getCookie } from "hono/cookie";
 import { timingSafeEqual } from "hono/utils/buffer";
 import { nanoid } from "nanoid";
 import { z } from "zod";
@@ -9,7 +10,7 @@ import { SHARE_TOKEN_LENGTH } from "../config";
 import { createDb, files, shares } from "../db";
 import { requireAuth } from "../lib/auth";
 import { sha256Hex } from "../lib/hash";
-import { pickLocale } from "../lib/locale";
+import { LOCALE_COOKIE, pickLocale } from "../lib/locale";
 import { serveObject } from "../lib/r2";
 import { errorPage, passwordPage } from "../templates/pages";
 import type { AppEnv } from "../types";
@@ -87,7 +88,10 @@ export const shareRoutes = new Hono<AppEnv>()
   /** Visit a share: expiry and password checks (password as SHA-256 hex in ?p=). */
   .get("/s/:token", async (c) => {
     const token = c.req.param("token");
-    const locale = pickLocale(c.req.header("Accept-Language"));
+    const locale = pickLocale(
+      getCookie(c, LOCALE_COOKIE),
+      c.req.header("Accept-Language")
+    );
     const db = createDb(c.env.DB);
 
     const row = await db
