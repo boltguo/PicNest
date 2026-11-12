@@ -5,7 +5,7 @@
   "packageManager": "pnpm@11.11.0",
   "scripts": {
     "dev": "mkdir -p web/dist && pnpm db:migrate:local && concurrently -n worker,web -c blue,green \"wrangler dev\" \"pnpm -F @picnest/web dev\"",
-    "build": "pnpm -F @picnest/web build",
+    "build": "pnpm -F @picnest/web build && node scripts/migrate-cloudflare.mjs",
     "deploy": "pnpm typecheck && pnpm build && pnpm db:migrate && wrangler deploy",
     "typecheck": "tsc -p worker && pnpm -F @picnest/web typecheck",
     "secret": "wrangler secret put ADMIN_PASSWORD && openssl rand -base64 32 | wrangler secret put JWT_SECRET",

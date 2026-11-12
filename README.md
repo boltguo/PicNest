@@ -83,6 +83,10 @@ For an existing deployment, run `pnpm deploy` to upgrade. The migration preserve
 and share links and creates the `LIBRARY` Durable Object binding for coordinated writes
 and background tasks. The two required environment variables remain the same.
 
+On Cloudflare Workers Builds, `pnpm build` applies pending D1 migrations after the frontend
+build succeeds, before the deployment command runs. Local and GitHub CI builds never
+modify the remote database.
+
 ## Local development
 
 ```bash

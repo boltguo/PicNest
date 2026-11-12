@@ -79,6 +79,9 @@ R2 桶保持私有：关闭 `r2.dev` 公开访问，不给桶绑定自定义域�
 已有部署升级时，继续运行 `pnpm deploy`。迁移会保留现有文件和分享记录，并创建
 `LIBRARY` Durable Object 绑定来协调写入和后台任务；必填环境变量仍然只有上述两个。
 
+通过 Cloudflare Workers Builds 自动部署时，`pnpm build` 会在构建成功后自动执行 D1 迁移，
+然后由现有部署命令发布 Worker；本地与 GitHub CI 构建不会修改远程数据库。
+
 ## 本地开发
 
 ```bash
