@@ -2,7 +2,7 @@ import { Button } from "@heroui/react";
 import { Trash2 } from "lucide-react";
 import { useId, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
-import { fileUrl, type FolderInfo } from "../lib/api";
+import { thumbnailUrl, type FolderInfo } from "../lib/api";
 
 /**
  * Item geometry from the frosted-folder reference design, left to right.
@@ -88,7 +88,7 @@ export function FolderCard({ folder, onOpen, onDelete }: FolderCardProps) {
                 >
                   <div className="folder-frame">
                     <figure className="folder-photo">
-                      <img src={fileUrl(previews[i])} alt="" loading="lazy" />
+                      <img src={thumbnailUrl(previews[i])} alt="" loading="lazy" />
                     </figure>
                   </div>
                 </div>

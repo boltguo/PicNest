@@ -13,6 +13,10 @@ export interface FileInfo {
   mime: string;
   /** Epoch milliseconds. */
   uploaded: number;
+  width: number | null;
+  height: number | null;
+  thumbnail: boolean;
+  missing: boolean;
 }
 
 export interface FolderInfo {
@@ -26,13 +30,11 @@ export interface FolderInfo {
   previews: string[];
 }
 
-interface ListResult {
+export interface ListResult {
   folder: string;
   folders: FolderInfo[];
   files: FileInfo[];
-  /** Global stats across the whole library, not just this folder. */
-  count: number;
-  totalSize: number;
+  nextCursor: string | null;
 }
 
 export interface ShareInfo {
@@ -81,8 +83,21 @@ export const api = {
   login: async (password: string) =>
     (await http.post<{ token: string }>("/api/login", { password })).data,
 
-  list: async (folder: string) =>
-    (await http.get<ListResult>("/api/list", { params: { folder } })).data,
+  list: async (
+    folder: string,
+    sort = "newest",
+    cursor?: string,
+    signal?: AbortSignal,
+  ) =>
+    (
+      await http.get<ListResult>("/api/list", {
+        params: { folder, sort, cursor },
+        signal,
+      })
+    ).data,
+
+  stats: async () =>
+    (await http.get<{ count: number; totalSize: number }>("/api/stats")).data,
 
   remove: async (id: number) => {
     await http.delete("/api/file", { params: { id } });
@@ -90,24 +105,32 @@ export const api = {
 
   /** Move and/or rename. Metadata only — the stored object is untouched. */
   move: async (id: number, changes: { folder?: string; name?: string }) =>
-    (await http.patch<{ id: number; folder: string; name: string }>(
-      "/api/file",
-      { id, ...changes }
-    )).data,
+    (
+      await http.patch<{ id: number; folder: string; name: string }>(
+        "/api/file",
+        { id, ...changes },
+      )
+    ).data,
 
   upload: async (
     file: File,
     folder: string,
-    onProgress: (percent: number) => void
+    onProgress: (percent: number) => void,
+    signal?: AbortSignal,
   ) =>
     (
-      await http.put<{ id: number; key: string; url: string }>("/api/upload", file, {
-        params: { name: file.name, folder },
-        headers: { "Content-Type": file.type || "application/octet-stream" },
-        onUploadProgress: (e) => {
-          if (e.total) onProgress(Math.round((e.loaded / e.total) * 100));
+      await http.put<{ id: number; key: string; url: string }>(
+        "/api/upload",
+        file,
+        {
+          signal,
+          params: { name: file.name, folder },
+          headers: { "Content-Type": file.type || "application/octet-stream" },
+          onUploadProgress: (e) => {
+            if (e.total) onProgress(Math.round((e.loaded / e.total) * 100));
+          },
         },
-      })
+      )
     ).data,
 
   folders: async () =>
@@ -116,18 +139,55 @@ export const api = {
   createFolder: async (path: string) =>
     (await http.post<{ path: string }>("/api/folder", { path })).data,
 
-  removeFolder: async (path: string) => {
-    await http.delete("/api/folder", { params: { path } });
-  },
+  removeFolder: async (path: string) =>
+    (await http.delete<Job>("/api/folder", { params: { path } })).data,
+
+  thumbnail: async (
+    id: number,
+    blob: Blob,
+    width: number,
+    height: number,
+    signal?: AbortSignal,
+  ) =>
+    http.put("/api/thumbnail", blob, {
+      params: { id, width, height },
+      signal,
+      headers: { "Content-Type": "image/webp" },
+    }),
+  pendingThumbnails: async (after: number, signal?: AbortSignal) =>
+    (
+      await http.get<{
+        files: Pick<FileInfo, "id" | "key" | "name">[];
+        next: number | null;
+      }>("/api/thumbnails/pending", { params: { after }, signal })
+    ).data,
+  jobs: async () =>
+    (await http.get<{ jobs: Job[]; cleanupPending: number }>("/api/jobs")).data,
+  retryJob: async (id: string) =>
+    (await http.post<Job>(`/api/jobs/${id}/retry`)).data,
+  scan: async () => (await http.post<Job>("/api/repair")).data,
+  findings: async (id: string, after = 0) =>
+    (
+      await http.get<{ findings: Finding[]; next: number | null }>(
+        `/api/repair/${id}`,
+        { params: { after } },
+      )
+    ).data,
+  importFinding: async (id: number) => http.post("/api/repair/import", { id }),
 
   createShare: async (
     id: number,
-    options: { hours?: number | null; password?: string | null }
+    options: { hours?: number | null; password?: string | null },
   ) =>
-    (await http.post<{ url: string; exp: number | null }>("/api/share", { id, ...options }))
-      .data,
+    (
+      await http.post<{ url: string; exp: number | null }>("/api/share", {
+        id,
+        ...options,
+      })
+    ).data,
 
-  shares: async () => (await http.get<{ shares: ShareInfo[] }>("/api/shares")).data.shares,
+  shares: async () =>
+    (await http.get<{ shares: ShareInfo[] }>("/api/shares")).data.shares,
 
   removeShare: async (token: string) => {
     await http.delete("/api/share", { params: { token } });
@@ -137,3 +197,24 @@ export const api = {
 export const fileUrl = (key: string) => `/f/${encodeURI(key)}`;
 export const shareUrl = (token: string) => `/s/${token}`;
 export const absoluteUrl = (path: string) => location.origin + path;
+
+export const thumbnailUrl = (key: string) => `/t/${encodeURIComponent(key)}`;
+export interface Job {
+  id: string;
+  kind: "delete-folder" | "repair";
+  path: string;
+  status: "running" | "done" | "error";
+  phase: string;
+  processed: number;
+  total: number;
+  error: string | null;
+  updatedAt: number;
+}
+export interface Finding {
+  id: number;
+  key: string;
+  kind: "missing" | "unindexed";
+  name: string;
+  folder: string;
+  resolved: number;
+}

@@ -15,6 +15,8 @@ export type SortKey = (typeof SORT_KEYS)[number];
 
 interface PrefsState {
   sort: SortKey;
+  linkFormat: "url" | "markdown" | "html";
+  setLinkFormat: (linkFormat: "url" | "markdown" | "html") => void;
   setSort: (sort: SortKey) => void;
 }
 
@@ -22,8 +24,10 @@ export const usePrefsStore = create<PrefsState>()(
   persist(
     (set) => ({
       sort: "newest",
+      linkFormat: "url",
+      setLinkFormat: (linkFormat) => set({ linkFormat }),
       setSort: (sort) => set({ sort }),
     }),
-    { name: "picnest-prefs" }
-  )
+    { name: "picnest-prefs" },
+  ),
 );

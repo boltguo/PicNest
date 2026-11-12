@@ -15,10 +15,10 @@
 
 ## Features
 
-- **Upload** — drag and drop, paste from the clipboard, progress per file
+- **Upload** — drag and drop, paste from the clipboard, per-file and total progress, cancellation, batch retry
 - **Organize** — folders, breadcrumbs, move and rename, six sort orders
-- **Browse** — responsive grid, lightbox preview, file details
-- **Direct links** — `/f/<key>`, permanent and public, paste anywhere
+- **Browse** — thumbnails, paginated server-side sorting, lightbox preview, file details
+- **Direct links** — `/f/<key>`, copy as URL, Markdown or HTML
 - **Share links** — optional expiry and password, visit counts, revocable
 - **Deduplication** — identical images are stored once no matter how often you upload them
 - **One password** — JWT session for 7 days, login throttled at the edge
@@ -79,6 +79,10 @@ in the Cloudflare dashboard.
 Keep the R2 bucket private: disable public access through `r2.dev` and do not
 attach a custom domain to the bucket.
 
+For an existing deployment, run `pnpm deploy` to upgrade. The migration preserves files
+and share links and creates the `LIBRARY` Durable Object binding for coordinated writes
+and background tasks. The two required environment variables remain the same.
+
 ## Local development
 
 ```bash
@@ -87,11 +91,12 @@ cp .dev.vars.example .dev.vars   # set ADMIN_PASSWORD and JWT_SECRET
 pnpm dev                         # worker :8787 + vite :5173
 ```
 
-Open http://localhost:5173. Vite proxies `/api`, `/f/…` and `/s/…` to the
+Open http://localhost:5173. Vite proxies `/api`, `/f/…`, `/t/…` and `/s/…` to the
 Worker; local D1 and R2 data live in `.wrangler/state/`.
 
 ```bash
 pnpm typecheck                   # worker + web
+pnpm test                        # local D1/R2 integration tests and unit tests
 pnpm db:generate                 # after editing worker/src/db/schema.ts
 pnpm db:migrate:local            # apply the new migration locally
 ```
@@ -99,29 +104,17 @@ pnpm db:migrate:local            # apply the new migration locally
 ## How it works
 
 ```mermaid
-flowchart LR
-    subgraph browser["Browser"]
-        SPA["React SPA<br/>HeroUI · TanStack Query"]
-    end
-    guest["Share recipient"]
-
-    subgraph edge["Cloudflare edge"]
-        W["Worker · Hono"]
-        ASSETS["Static assets<br/>web/dist"]
-    end
-
-    subgraph storage["Storage (private, bindings only)"]
-        R2[("R2<br/>image bytes")]
-        D1[("D1 · SQLite<br/>metadata index")]
-    end
-
-    SPA -->|"/api/* + JWT"| W
-    SPA -->|"/f/&lt;key&gt;"| W
-    guest -->|"/s/&lt;token&gt;"| W
-    W --> ASSETS
-    W -->|BUCKET binding| R2
-    W -->|DB binding| D1
+flowchart TD
+    B["Browser"] --> W["Worker"]
+    W -->|"Reads"| R["R2 images"]
+    W -->|"Reads"| D["D1 metadata"]
+    W -->|"Writes"| C["Library coordinator"]
+    C -->|"Serialized writes and alarms"| R
+    C --> D
 ```
+
+The Worker serves reads; the `LIBRARY` Durable Object serializes writes and uses alarms
+for bounded deletion and scan jobs.
 
 One Worker serves everything: the React app as static assets, the JSON API, the
 image bytes, and the server-rendered share pages.
@@ -136,18 +129,25 @@ rows pointing at one object.
 everything else** — names, folders, which logical files exist, and every share
 link. A full backup is both halves; neither reconstructs the other.
 
-`POST /api/repair` reconciles the two: objects with no row are imported, rows
-whose object is gone are dropped. It is a consistency repair, **not** a
-database restore. Each object carries only the name and folder it was *first*
-uploaded with, so an import gets your images back under their original names
-and cannot get back a rename, a move, the second folder a deduplicated image
-was filed in, or any share link. For that, use
-[D1 Time Travel](https://developers.cloudflare.com/d1/reference/time-travel/) —
-7 days of point-in-time restore on the free plan, 30 on paid.
+### Library maintenance
 
-Repair only touches PicNest's own content-addressed keys, and imports at most
-ten objects per call so it stays inside one Worker invocation's query budget.
-Run it again while the response still reports a non-zero `remaining`.
+Open **Library maintenance** from the top-right menu:
+
+- **Scan library** checks D1 and R2 in background pages, with saved progress and retry.
+  Missing originals are marked without removing file records or share links. Re-upload
+  the original image to restore its bytes.
+- **Import** adds an unindexed object only when selected. Intentionally deleted objects
+  are excluded from repair imports.
+- **Generate missing thumbnails** processes existing images sequentially in your browser.
+  Keep the page open; you can cancel and run it again. Originals stay unchanged, animated
+  images use static thumbnails, and the lightbox loads the original. Failed previews can
+  be retried by running generation again.
+
+Folder deletion is a background task with visible progress. Uploads, moves and renames
+inside its subtree are blocked until it completes. Failed tasks can resume; object cleanup
+automatically retries. A shared image is removed only after its last reference is deleted.
+
+A scan is not a full backup. Restoring names, folders and share links still requires a D1 backup.
 
 ### Security
 
@@ -178,17 +178,25 @@ Authenticated endpoints take `Authorization: Bearer <jwt>`.
 | Method | Path | Description | Auth |
 | --- | --- | --- | --- |
 | POST | `/api/login` | `{password}` → `{token}` | - |
-| GET | `/api/list?folder=` | Folder contents + global stats | ✓ |
+| GET | `/api/list?folder=` | Paginated files; `folder`, `sort`, `limit`, `cursor` | ✓ |
 | PUT | `/api/upload?name=&folder=` | Raw bytes as body; dedups by content | ✓ |
 | PATCH | `/api/file` | `{id, folder?, name?}` — move / rename | ✓ |
 | DELETE | `/api/file?id=` | Delete one file | ✓ |
 | GET | `/api/folders` | Every folder path | ✓ |
 | POST | `/api/folder` | `{path}` — create (idempotent) | ✓ |
-| DELETE | `/api/folder?path=` | Delete folder recursively | ✓ |
+| DELETE | `/api/folder?path=` | Start recursive deletion job (202) | ✓ |
 | POST | `/api/share` | `{id, hours?, password?}` → `{url, exp}` | ✓ |
 | GET | `/api/shares` | Live shares with visit counts | ✓ |
 | DELETE | `/api/share?token=` | Revoke a share | ✓ |
-| POST | `/api/repair` | Reconcile the D1 index against R2 | ✓ |
+| POST | `/api/repair` | Start consistency scan (202) | ✓ |
+| GET | `/api/stats` | Global file count and deduplicated storage size | ✓ |
+| GET | `/api/jobs` | Background jobs and pending cleanup count | ✓ |
+| POST | `/api/jobs/:id/retry` | Resume a failed job | ✓ |
+| GET | `/api/repair/:id?after=` | Paginated scan findings | ✓ |
+| POST | `/api/repair/import` | `{id}` — import a selected finding | ✓ |
+| PUT | `/api/thumbnail?id=&width=&height=` | WebP thumbnail, up to 512 KB | ✓ |
+| GET | `/api/thumbnails/pending?after=` | Files without thumbnails | ✓ |
+| GET | `/t/<key>` | Thumbnail, falling back to the original | - |
 | GET | `/f/<key>` | Public direct link | - |
 | GET | `/s/<token>` | Share access, or the password form | - |
 | POST | `/s/<token>` | `password=` → unlock cookie, then redirect | - |

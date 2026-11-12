@@ -6,12 +6,13 @@
   "scripts": {
     "dev": "mkdir -p web/dist && pnpm db:migrate:local && concurrently -n worker,web -c blue,green \"wrangler dev\" \"pnpm -F @picnest/web dev\"",
     "build": "pnpm -F @picnest/web build",
-    "deploy": "pnpm build && pnpm db:migrate && wrangler deploy",
+    "deploy": "pnpm typecheck && pnpm build && pnpm db:migrate && wrangler deploy",
     "typecheck": "tsc -p worker && pnpm -F @picnest/web typecheck",
     "secret": "wrangler secret put ADMIN_PASSWORD && openssl rand -base64 32 | wrangler secret put JWT_SECRET",
     "db:generate": "drizzle-kit generate",
     "db:migrate:local": "wrangler d1 migrations apply picnest --local",
-    "db:migrate": "wrangler d1 migrations apply picnest --remote"
+    "db:migrate": "wrangler d1 migrations apply picnest --remote",
+    "test": "node --import tsx --test tests/*.test.ts"
   },
   "dependencies": {
     "@hono/zod-validator": "^0.4.2",
@@ -24,6 +25,9 @@
     "@cloudflare/workers-types": "^5.20260801.0",
     "concurrently": "^9.1.0",
     "drizzle-kit": "^0.31.10",
+    "esbuild": "^0.28.2",
+    "miniflare": "^4.20260730.0",
+    "tsx": "^4.23.15",
     "typescript": "^5.7.2",
     "wrangler": "^4.0.0"
   }

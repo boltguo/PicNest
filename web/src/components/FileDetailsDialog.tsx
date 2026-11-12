@@ -19,6 +19,10 @@ export function FileDetailsDialog({
   useEffect(() => {
     setSize(null);
     if (!file) return;
+    if (file.width && file.height) {
+      setSize({ w: file.width, h: file.height });
+      return;
+    }
     const img = new Image();
     img.onload = () => setSize({ w: img.naturalWidth, h: img.naturalHeight });
     img.src = fileUrl(file.key);

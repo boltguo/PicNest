@@ -13,6 +13,7 @@ export default defineConfig({
       "/api": WORKER_DEV,
       "^/f/.+": WORKER_DEV,
       "^/s/.+": WORKER_DEV,
+      "^/t/.+": WORKER_DEV,
     },
   },
 });

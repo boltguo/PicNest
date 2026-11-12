@@ -1,6 +1,31 @@
 import type en from "./en";
 
 const zh: typeof en = {
+  maintenance: {
+    title: "图库维护",
+    description:
+      "扫描缺失图片和未入库图片。缺失记录与分享链接会保留，选择需要的图片后再导入。",
+    scan: "扫描图库",
+    thumbnails: "补生成缩略图",
+    thumbnailProgress:
+      "缩略图：已生成 {{done}} 张，失败 {{failed}} 张。处理期间请保持页面打开。",
+    cleanup: "还有 {{count}} 个对象等待清理",
+    failed: "操作失败，请重试",
+    running: "处理中",
+    done: "已完成",
+    error: "失败",
+    retryHint: "重试会从保存的进度继续。",
+    scanned: "已检查 {{count}} 项",
+    results: "查看结果",
+    noFindings: "目前未发现异常",
+    missing: "原图缺失，可重新上传恢复",
+    unindexed: "图片存在，但没有图库记录",
+    import: "导入",
+    imported: "已导入",
+  },
+  links: {
+    format: "复制格式",
+  },
   app: { name: "PicNest" },
   common: {
     cancel: "取消",
@@ -38,6 +63,17 @@ const zh: typeof en = {
     hint: "支持 JPEG · PNG · GIF · WebP · AVIF，单文件最大 32 MB",
   },
   upload: {
+    cancelHint: "取消会停止后续处理，已保存的图片会保留在图库中。",
+    queue: "上传队列",
+    summary: "已上传 {{done}} / {{total}} 张",
+    expand: "展开上传任务",
+    collapse: "折叠上传任务",
+    totalProgress: "上传总进度",
+    processing: "生成预览",
+    cancelled: "已取消",
+    retryAll: "重试失败项",
+    cancelAll: "取消剩余",
+    clear: "清除已结束",
     queued: "排队中",
     done: "完成",
     error: "失败",
@@ -50,6 +86,7 @@ const zh: typeof en = {
   },
   breadcrumb: { home: "图库" },
   folder: {
+    deleteStarted: "已开始删除文件夹",
     items_one: "{{count}} 个项目",
     items_other: "{{count}} 个项目",
     new: "新建文件夹",
@@ -64,6 +101,7 @@ const zh: typeof en = {
     deleteFailed: "删除文件夹失败",
   },
   file: {
+    loadMore: "加载更多",
     empty: "还没有图片",
     emptyDescription: "把图片拖到上面的区域，点击选择文件，或者直接粘贴。",
     emptyFolder: "这个文件夹是空的",
@@ -112,6 +150,7 @@ const zh: typeof en = {
     smallest: "从小到大",
   },
   share: {
+    publicNotice: "密码和有效期仅适用于此分享链接，图片的公开直链仍可访问。",
     action: "分享…",
     title: "创建分享链接",
     expiry: "有效期",
@@ -138,7 +177,8 @@ const zh: typeof en = {
     revoked: "分享链接已撤销",
     revokeFailed: "撤销失败",
     empty: "还没有分享链接",
-    emptyDescription: "在任意图片上选择「分享…」，就能生成一条可以发出去的链接。",
+    emptyDescription:
+      "在任意图片上选择「分享…」，就能生成一条可以发出去的链接。",
   },
 };
 
