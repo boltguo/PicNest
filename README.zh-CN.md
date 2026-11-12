@@ -13,10 +13,6 @@
 
 <p align="center"><a href="README.md">English</a> | 简体中文</p>
 
-<p align="center">
-  <a href="https://deploy.workers.cloudflare.com/?url=https://github.com/boltguo/PicNest"><img alt="Deploy to Cloudflare" src="https://deploy.workers.cloudflare.com/button"></a>
-</p>
-
 ## 功能
 
 - **上传** —— 拖拽、剪贴板粘贴、多文件并发、单文件进度
@@ -31,34 +27,54 @@
 支持 JPEG、PNG、GIF、WebP、AVIF，单文件最大 32 MB。格式由文件自身的字节判定，不采信
 浏览器声明的 `Content-Type`。
 
-## 部署
+## 自行部署
 
-### 一键部署
+准备 Node.js、pnpm 和 OpenSSL，并在 Cloudflare 账号中启用 R2。
 
-点页面顶部那个按钮。Cloudflare 会把这个仓库克隆到你自己的 GitHub 账号下，替你创建
-R2 桶和 D1 数据库，在设置页问你要两个密钥，然后部署。之后往你那份仓库推代码就会
-自动重新部署。
-
-设置页要填的是这两个：
-
-- `ADMIN_PASSWORD` —— 你登录时输入的密码，挑个好的。
-- `JWT_SECRET` —— 会话的签名密钥。**这个要生成，不要自己想**：
-  `openssl rand -base64 32`。它是 HMAC 密钥，用一个记得住的字符串当密钥，等于
-  任何一个被截获的会话令牌都能拿去离线穷举。
-
-部署完在面板里还有两件事要做：
-
-- 把域名绑到 Worker 上。
-- 桶保持私有 —— 不开 `r2.dev` 子域，不给桶绑自定义域名。所有字节都应该经 Worker 出去。
-
-### 在本机部署
+### 1. 创建资源
 
 ```bash
-npx wrangler r2 bucket create picnest
-npx wrangler d1 create picnest   # 把 database_id 填进 wrangler.jsonc
-pnpm secret                      # 询问 ADMIN_PASSWORD，自动生成 JWT_SECRET
-pnpm deploy                      # 构建 + 迁移 + 发布
+git clone https://github.com/boltguo/PicNest.git
+cd PicNest
+pnpm install
+pnpm exec wrangler login
+pnpm exec wrangler r2 bucket create picnest
+pnpm exec wrangler d1 create picnest
 ```
+
+将 `wrangler.jsonc` 中的 `d1_databases[0].database_id` 替换为最后一条命令返回的
+数据库 ID。R2 桶使用 `BUCKET` 绑定，D1 使用 `DB` 绑定；以上命令的资源名称与配置文件一致。
+
+### 2. 设置环境变量
+
+以下两个变量均为必填，生产环境使用 Worker Secrets 保存：
+
+| 变量 | 用途 | 设置方式 |
+| --- | --- | --- |
+| `ADMIN_PASSWORD` | 后台登录密码 | 自行设置强密码 |
+| `JWT_SECRET` | 签名登录会话和分享解锁 Cookie | 使用 `openssl rand -base64 32` 生成随机密钥 |
+
+```bash
+pnpm secret
+```
+
+命令会询问 `ADMIN_PASSWORD`，并自动生成、上传 `JWT_SECRET`。
+单独设置时，可分别执行 `pnpm exec wrangler secret put ADMIN_PASSWORD`
+和 `pnpm exec wrangler secret put JWT_SECRET`。
+
+本地开发时，将 `.dev.vars.example` 复制为 `.dev.vars`，填写同样的两个变量。
+实际值不要提交到仓库。
+
+### 3. 发布
+
+```bash
+pnpm deploy
+```
+
+该命令会构建前端、执行远程 D1 数据库迁移并发布 Worker。
+完成后打开 Wrangler 输出的网址，也可以在 Cloudflare 面板中为 Worker 绑定自定义域名。
+
+R2 桶保持私有：关闭 `r2.dev` 公开访问，不给桶绑定自定义域名。
 
 ## 本地开发
 
