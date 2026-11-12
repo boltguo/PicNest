@@ -53,7 +53,7 @@ export function FileCard({
         ) : (
           /* Absolute so the intrinsic image height can't stretch the square. */
           <img
-            src={thumbnailUrl(file.key)}
+            src={`${thumbnailUrl(file.key)}${file.thumbnail ? "?v=1" : ""}`}
             decoding="async"
             alt={file.name}
             loading="lazy"

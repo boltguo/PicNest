@@ -19,3 +19,11 @@ jobs:
       - run: pnpm test
       - run: pnpm build
       - run: pnpm exec wrangler deploy --dry-run --outdir /tmp/picnest-worker
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:e2e
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: browser-test-results
+          path: test-results/
+          retention-days: 7
