@@ -5,6 +5,7 @@ export type Bindings = {
   BUCKET: R2Bucket;
   /** D1 database — source of truth for names, folders and share links. */
   DB: D1Database;
+  LIBRARY: DurableObjectNamespace;
   /** Static assets (web/dist, SPA fallback). */
   ASSETS: Fetcher;
   /** Admin password; set via `wrangler secret put ADMIN_PASSWORD`. */

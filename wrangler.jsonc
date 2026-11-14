@@ -9,7 +9,7 @@
     // The asset router answers browser *navigations* before the Worker runs, so
     // without this a pasted /f/ link or an opened /s/ share would get index.html
     // instead of the image. These prefixes must always reach the Worker.
-    "run_worker_first": ["/api/*", "/f/*", "/s/*"],
+    "run_worker_first": ["/api/*", "/f/*", "/s/*", "/t/*"],
   },
   "r2_buckets": [
     {
@@ -60,6 +60,10 @@
       },
     },
   ],
+  "durable_objects": {
+    "bindings": [{ "name": "LIBRARY", "class_name": "LibraryCoordinator" }],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["LibraryCoordinator"] }],
   "observability": {
     "enabled": true,
   },

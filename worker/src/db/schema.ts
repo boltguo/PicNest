@@ -13,8 +13,8 @@ import {
  * R2 is the source of truth for file BYTES; this database is the source of
  * truth for everything else — names, folders, which logical files exist, and
  * share links. Neither half reconstructs the other, and a full backup is both
- * of them. `POST /api/repair` reconciles the two, it does not restore one
- * from the other; point-in-time recovery here is D1 Time Travel.
+ * of them. `POST /api/repair` scans for discrepancies without removing
+ * records; importing unindexed objects is a separate explicit operation.
  *
  * Objects are content-addressed — the key is the SHA-256 of the bytes plus
  * the extension the format sniffer assigned, never the file name — so a link
@@ -26,7 +26,7 @@ import {
  * Because the key is derived from content, the same image filed in two
  * folders is ONE object with TWO rows. `key` is therefore not unique and
  * is not a row identifier — use `id`. Deleting bytes requires checking
- * that no other row still points at the key (see `deleteFileRows`).
+ * that no other row still points at the key (see `cleanObjects`).
  *
  * Timestamps are epoch milliseconds (UTC) stored as integers.
  */
@@ -49,6 +49,10 @@ export const files = sqliteTable(
      * lookups go through `key`.
      */
     hash: text("hash"),
+    width: integer("width"),
+    height: integer("height"),
+    thumbnailKey: text("thumbnail_key"),
+    missing: integer("missing").notNull().default(0),
     createdAt: integer("created_at")
       .notNull()
       .default(sql`(unixepoch() * 1000)`),
@@ -63,7 +67,9 @@ export const files = sqliteTable(
     index("idx_files_folder").on(t.folder),
     index("idx_files_created_at").on(t.createdAt),
     index("idx_files_key").on(t.key),
-  ]
+    index("idx_files_folder_created_id").on(t.folder, t.createdAt, t.id),
+    index("idx_files_folder_size_id").on(t.folder, t.size, t.id),
+  ],
 );
 
 export const folders = sqliteTable("folders", {
@@ -92,9 +98,52 @@ export const shares = sqliteTable(
       .notNull()
       .default(sql`(unixepoch() * 1000)`),
   },
-  (t) => [index("idx_shares_file_id").on(t.fileId)]
+  (t) => [index("idx_shares_file_id").on(t.fileId)],
 );
 
 export type FileRow = typeof files.$inferSelect;
 export type FolderRow = typeof folders.$inferSelect;
 export type ShareRow = typeof shares.$inferSelect;
+
+/** Durable cleanup intentions also prevent repair from resurrecting deletions. */
+export const tombstones = sqliteTable("object_tombstones", {
+  key: text("key").primaryKey(),
+  pending: integer("pending").notNull().default(1),
+  createdAt: integer("created_at").notNull(),
+});
+
+export const jobs = sqliteTable(
+  "jobs",
+  {
+    id: text("id").primaryKey(),
+    kind: text("kind", { enum: ["delete-folder", "repair"] }).notNull(),
+    path: text("path").notNull().default(""),
+    status: text("status", { enum: ["running", "done", "error"] })
+      .notNull()
+      .default("running"),
+    phase: text("phase").notNull().default("files"),
+    cursor: text("cursor").notNull().default("0"),
+    processed: integer("processed").notNull().default(0),
+    total: integer("total").notNull().default(0),
+    error: text("error"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [index("idx_jobs_status").on(t.status)],
+);
+
+export const findings = sqliteTable(
+  "repair_findings",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    jobId: text("job_id")
+      .notNull()
+      .references(() => jobs.id, { onDelete: "cascade" }),
+    key: text("key").notNull(),
+    kind: text("kind", { enum: ["missing", "unindexed"] }).notNull(),
+    name: text("name").notNull(),
+    folder: text("folder").notNull(),
+    resolved: integer("resolved").notNull().default(0),
+  },
+  (t) => [uniqueIndex("idx_findings_job_key_kind").on(t.jobId, t.key, t.kind)],
+);

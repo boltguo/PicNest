@@ -1,12 +1,12 @@
 import { zValidator } from "@hono/zod-validator";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, lt, or, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
 import { CONTENT_KEY_RE, MAX_UPLOAD_BYTES } from "../config";
-import { createDb, files, folders, type Db } from "../db";
+import { createDb, files, folders, tombstones, type Db } from "../db";
 import { requireAuth } from "../lib/auth";
-import { deleteFileRows, insertFileRow, isKeyTaken } from "../lib/files";
+import { insertFileRow, isKeyTaken } from "../lib/files";
 import { sha256Hex } from "../lib/hash";
 import { detectImage, formatForKey, withImageExtension } from "../lib/image";
 import {
@@ -18,18 +18,17 @@ import {
   resolveUniqueName,
   sanitizeFileName,
 } from "../lib/paths";
+import {
+  assertFolderWritable,
+  deleteRows,
+  thumbnailKey,
+} from "../lib/maintenance";
+import { decodeCursor, encodeCursor, SORT_KEYS } from "../lib/pagination";
 import { serveObject } from "../lib/r2";
 import type { AppEnv } from "../types";
 
 /** How many recent images peek out of a folder card. */
 const FOLDER_PREVIEW_LIMIT = 5;
-
-/** True if `path` sits directly inside `parent` ("" = root). */
-const isDirectChild = (path: string, parent: string) =>
-  parent === ""
-    ? !path.includes("/")
-    : path.startsWith(`${parent}/`) &&
-      !path.slice(parent.length + 1).includes("/");
 
 interface FolderStats {
   /** Recent image keys, newest first. */
@@ -56,7 +55,7 @@ interface FolderStats {
  */
 async function childFolderStats(
   db: Db,
-  parent: string
+  parent: string,
 ): Promise<Map<string, FolderStats>> {
   // Everything strictly under `parent`; each such row belongs to exactly one
   // direct child, and their union is every file the children hold.
@@ -109,66 +108,74 @@ async function childFolderStats(
   return stats;
 }
 
-/**
- * Rows the user sees, and bytes the account is actually billed for. The two
- * differ whenever one deduplicated object backs several rows, so the totals
- * are counted over distinct keys rather than over rows.
- */
-async function libraryStats(db: Db) {
-  const objects = db
-    .select({ size: sql<number>`min(${files.size})`.as("size") })
-    .from(files)
-    .groupBy(files.key)
-    .as("objects");
-
-  const [logical, physical] = await Promise.all([
-    db.select({ count: sql<number>`count(*)` }).from(files).get(),
-    db
-      .select({ bytes: sql<number>`coalesce(sum(${objects.size}), 0)` })
-      .from(objects)
-      .get(),
-  ]);
-
-  return { count: logical?.count ?? 0, totalSize: physical?.bytes ?? 0 };
-}
-
 export const fileRoutes = new Hono<AppEnv>()
 
-  /** Contents of one folder plus global storage stats. */
   .get(
     "/api/list",
     requireAuth,
-    zValidator("query", z.object({ folder: folderSchema.default("") })),
+    zValidator(
+      "query",
+      z.object({
+        folder: folderSchema.default(""),
+        sort: z.enum(SORT_KEYS).default("newest"),
+        limit: z.coerce.number().int().min(1).max(100).default(50),
+        cursor: z.string().max(4096).optional(),
+      }),
+    ),
     async (c) => {
-      const { folder } = c.req.valid("query");
+      const { folder, sort, limit, cursor } = c.req.valid("query");
       const db = createDb(c.env.DB);
-
-      const [rows, allFolders, stats, childStats] = await Promise.all([
+      const decoded = cursor ? decodeCursor(cursor, folder, sort) : null;
+      if (cursor && !decoded) return c.json({ error: "invalid cursor" }, 400);
+      const column = sort.startsWith("name")
+        ? files.name
+        : ["largest", "smallest"].includes(sort)
+          ? files.size
+          : files.createdAt;
+      const descending = ["newest", "largest", "nameDesc"].includes(sort);
+      const compare = descending ? lt : gt;
+      const order = descending ? desc : asc;
+      const after = decoded
+        ? or(
+            compare(column, decoded.value),
+            and(eq(column, decoded.value), compare(files.id, decoded.id)),
+          )
+        : undefined;
+      const [rows, childFolders, childStats] = await Promise.all([
         db
           .select()
           .from(files)
-          .where(eq(files.folder, folder))
-          .orderBy(desc(files.createdAt), desc(files.id)),
-        // Folder count stays small in a personal library; filtering the
-        // direct children in JS avoids LIKE-escape gymnastics in SQL.
-        db.select().from(folders).orderBy(folders.path),
-        libraryStats(db),
-        childFolderStats(db, folder),
+          .where(and(eq(files.folder, folder), after))
+          .orderBy(order(column), order(files.id))
+          .limit(limit + 1),
+        cursor
+          ? Promise.resolve([])
+          : db
+              .select()
+              .from(folders)
+              .where(
+                folder === ""
+                  ? sql`instr(${folders.path}, '/') = 0`
+                  : and(
+                      descendantOf(folders.path, folder),
+                      sql`instr(${relativeTo(folders.path, folder)}, '/') = 0`,
+                    ),
+              )
+              .orderBy(folders.path),
+        cursor
+          ? Promise.resolve(new Map<string, FolderStats>())
+          : childFolderStats(db, folder),
       ]);
-
-      const children = allFolders
-        .filter((f) => isDirectChild(f.path, folder))
-        .map((f) => ({
-          path: f.path,
-          name: f.path.split("/").pop() ?? f.path,
-          ...(childStats.get(f.path) ?? { previews: [], count: 0 }),
-        }));
-
+      const page = rows.slice(0, limit);
+      const last = page[page.length - 1];
       return c.json({
         folder,
-        folders: children,
-        files: rows.map((r) => ({
-          // `key` addresses the bytes and may repeat; `id` addresses the file.
+        folders: childFolders.map((f) => ({
+          path: f.path,
+          name: f.path.split("/").pop()!,
+          ...(childStats.get(f.path) ?? { previews: [], count: 0 }),
+        })),
+        files: page.map((r) => ({
           id: r.id,
           key: r.key,
           folder: r.folder,
@@ -176,13 +183,26 @@ export const fileRoutes = new Hono<AppEnv>()
           size: r.size,
           mime: r.mime,
           uploaded: r.createdAt,
+          width: r.width,
+          height: r.height,
+          thumbnail: Boolean(r.thumbnailKey),
+          missing: Boolean(r.missing),
         })),
-        count: stats.count,
-        // Stored bytes, not the sum of the rows: two folders holding the same
-        // image cost storage once, and the header says "used".
-        totalSize: stats.totalSize,
+        nextCursor:
+          rows.length > limit && last
+            ? encodeCursor({
+                folder,
+                sort,
+                id: last.id,
+                value: sort.startsWith("name")
+                  ? last.name
+                  : ["largest", "smallest"].includes(sort)
+                    ? last.size
+                    : last.createdAt,
+              })
+            : null,
       });
-    }
+    },
   )
 
   /** Upload: raw bytes as body; name and target folder via query. */
@@ -202,11 +222,12 @@ export const fileRoutes = new Hono<AppEnv>()
       z.object({
         name: z.string().min(1),
         folder: folderSchema.default(""),
-      })
+      }),
     ),
     async (c) => {
       const { name: rawName, folder } = c.req.valid("query");
       const db = createDb(c.env.DB);
+      await assertFolderWritable(c.env, folder);
 
       const body = await c.req.arrayBuffer();
       if (body.byteLength === 0) return c.json({ error: "empty body" }, 400);
@@ -217,10 +238,7 @@ export const fileRoutes = new Hono<AppEnv>()
       const format = detectImage(body);
       if (!format) return c.json({ error: "unsupported media type" }, 415);
 
-      const displayName = withImageExtension(
-        sanitizeFileName(rawName),
-        format
-      );
+      const displayName = withImageExtension(sanitizeFileName(rawName), format);
       const hash = await sha256Hex(body);
       const key = contentKey(hash, format);
 
@@ -241,6 +259,11 @@ export const fileRoutes = new Hono<AppEnv>()
           customMetadata: { name, folder },
         });
       };
+      const finishUpload = () =>
+        db.batch([
+          db.delete(tombstones).where(eq(tombstones.key, key)),
+          db.update(files).set({ missing: 0 }).where(eq(files.key, key)),
+        ]);
 
       // Same bytes already sitting in this folder: nothing to add. Re-dropping
       // a file the user already has is a no-op, not a copy — but it is also
@@ -253,6 +276,7 @@ export const fileRoutes = new Hono<AppEnv>()
         .get();
       if (duplicate) {
         await storeUnlessPresent(duplicate.name);
+        await finishUpload();
         return c.json({
           id: duplicate.id,
           key,
@@ -264,6 +288,15 @@ export const fileRoutes = new Hono<AppEnv>()
 
       await ensureFolders(db, folder);
       await storeUnlessPresent(displayName);
+      const existingPreview = await db
+        .select({
+          width: files.width,
+          height: files.height,
+          thumbnailKey: files.thumbnailKey,
+        })
+        .from(files)
+        .where(and(eq(files.key, key), sql`${files.thumbnailKey} IS NOT NULL`))
+        .get();
 
       try {
         const { id, name } = await insertFileRow(
@@ -275,9 +308,12 @@ export const fileRoutes = new Hono<AppEnv>()
             mime: format.mime,
             hash,
             createdAt: Date.now(),
+            ...existingPreview,
           },
-          displayName
+          displayName,
         );
+        // Clear the deletion intent only after both bytes and a reference exist.
+        await finishUpload();
         return c.json({ id, key, name, url: `/f/${key}` });
       } catch (error) {
         if (!isKeyTaken(error)) throw error;
@@ -290,9 +326,10 @@ export const fileRoutes = new Hono<AppEnv>()
           .where(and(eq(files.key, key), eq(files.folder, folder)))
           .get();
         if (!winner) throw error;
+        await finishUpload();
         return c.json({ ...winner, key, url: `/f/${key}`, deduplicated: true });
       }
-    }
+    },
   )
 
   /** Move and/or rename. Pure metadata: the object is never touched. */
@@ -309,8 +346,8 @@ export const fileRoutes = new Hono<AppEnv>()
         })
         .refine(
           (v) => v.folder !== undefined || v.name !== undefined,
-          "nothing to change"
-        )
+          "nothing to change",
+        ),
     ),
     async (c) => {
       const { id, folder, name } = c.req.valid("json");
@@ -324,6 +361,8 @@ export const fileRoutes = new Hono<AppEnv>()
       if (!row) return c.json({ error: "not found" }, 404);
 
       const targetFolder = folder ?? row.folder;
+      await assertFolderWritable(c.env, row.folder);
+      await assertFolderWritable(c.env, targetFolder);
       // Upload guarantees the display name matches the format the sniffer
       // found; a rename must not be the way back out of that. Renaming a PNG
       // to `notes.html` is not dangerous — R2 supplies the content type and
@@ -368,7 +407,7 @@ export const fileRoutes = new Hono<AppEnv>()
       }
 
       return c.json({ id, folder: targetFolder, name: finalName });
-    }
+    },
   )
 
   /** Delete a single file. */
@@ -382,11 +421,93 @@ export const fileRoutes = new Hono<AppEnv>()
 
       // Cascades to shares via the foreign key; drops the object only when
       // no other folder still references the same content.
-      const deleted = await deleteFileRows(db, c.env.BUCKET, eq(files.id, id));
-      if (deleted === 0) return c.json({ error: "not found" }, 404);
+      const rows = await db
+        .select({ id: files.id, key: files.key, folder: files.folder })
+        .from(files)
+        .where(eq(files.id, id));
+      if (!rows.length) return c.json({ error: "not found" }, 404);
+      await assertFolderWritable(c.env, rows[0].folder);
+      await deleteRows(c.env, rows);
       return c.json({ ok: true });
-    }
+    },
   )
+
+  .put(
+    "/api/thumbnail",
+    requireAuth,
+    bodyLimit({ maxSize: 512 * 1024 }),
+    zValidator(
+      "query",
+      z.object({
+        id: z.coerce.number().int().positive(),
+        width: z.coerce.number().int().positive().max(100000),
+        height: z.coerce.number().int().positive().max(100000),
+      }),
+    ),
+    async (c) => {
+      const { id, width, height } = c.req.valid("query");
+      const db = createDb(c.env.DB);
+      const file = await db.select().from(files).where(eq(files.id, id)).get();
+      if (!file) return c.json({ error: "not found" }, 404);
+      await assertFolderWritable(c.env, file.folder);
+      const bytes = await c.req.arrayBuffer();
+      const format = detectImage(bytes);
+      if (format?.mime !== "image/webp")
+        return c.json({ error: "thumbnail must be WebP" }, 415);
+      const key = thumbnailKey(file.key);
+      await c.env.BUCKET.put(key, bytes, {
+        httpMetadata: { contentType: "image/webp" },
+      });
+      await db
+        .update(files)
+        .set({ width, height, thumbnailKey: key })
+        .where(eq(files.key, file.key));
+      return c.json({ ok: true });
+    },
+  )
+  .get(
+    "/api/thumbnails/pending",
+    requireAuth,
+    zValidator(
+      "query",
+      z.object({ after: z.coerce.number().int().nonnegative().default(0) }),
+    ),
+    async (c) => {
+      const rows = await createDb(c.env.DB)
+        .select({ id: files.id, key: files.key, name: files.name })
+        .from(files)
+        .where(
+          and(
+            gt(files.id, c.req.valid("query").after),
+            sql`${files.thumbnailKey} IS NULL`,
+            eq(files.missing, 0),
+          ),
+        )
+        .orderBy(files.id)
+        .limit(20);
+      return c.json({
+        files: rows,
+        next: rows.length === 20 ? rows[19].id : null,
+      });
+    },
+  )
+  .get("/t/:key", async (c) => {
+    const key = c.req.param("key");
+    if (!CONTENT_KEY_RE.test(key)) return c.text("Not found", 404);
+    const object = await c.env.BUCKET.get(thumbnailKey(key));
+    if (!object) {
+      c.header("Cache-Control", "no-store");
+      return c.redirect(`/f/${key}`, 302);
+    }
+    return new Response(object.body, {
+      headers: {
+        "Content-Type": "image/webp",
+        "Cache-Control": "public, max-age=86400",
+        "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": "sandbox",
+      },
+    });
+  })
 
   /**
    * Public direct link. Only PicNest's own content-addressed keys resolve

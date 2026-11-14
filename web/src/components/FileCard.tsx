@@ -10,9 +10,9 @@ import {
   Trash2,
 } from "lucide-react";
 import prettyBytes from "pretty-bytes";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { fileUrl, type FileInfo } from "../lib/api";
+import { thumbnailUrl, type FileInfo } from "../lib/api";
 import { formatDate } from "../lib/utils";
 
 interface FileCardProps {
@@ -38,11 +38,12 @@ export function FileCard({
   // The object can be missing from R2 while its D1 row survives, and a broken
   // <img> glyph in a grid of photos looks like the app failed, not the file.
   const [broken, setBroken] = useState(false);
+  useEffect(() => setBroken(false), [file.key, file.missing, file.thumbnail]);
 
   return (
     <Card className="gap-0 overflow-hidden p-0">
       <div className="bg-default relative aspect-square overflow-hidden">
-        {broken ? (
+        {broken || file.missing ? (
           <div className="text-muted absolute inset-0 flex flex-col items-center justify-center gap-1.5">
             <ImageOff className="size-5" aria-hidden />
             <span className="px-3 text-center text-[11px] leading-4">
@@ -52,7 +53,8 @@ export function FileCard({
         ) : (
           /* Absolute so the intrinsic image height can't stretch the square. */
           <img
-            src={fileUrl(file.key)}
+            src={`${thumbnailUrl(file.key)}${file.thumbnail ? "?v=1" : ""}`}
+            decoding="async"
             alt={file.name}
             loading="lazy"
             onError={() => setBroken(true)}
@@ -71,7 +73,12 @@ export function FileCard({
           {file.name}
         </p>
         <Dropdown>
-          <Button isIconOnly size="sm" variant="ghost" aria-label={t("file.actions")}>
+          <Button
+            isIconOnly
+            size="sm"
+            variant="ghost"
+            aria-label={t("file.actions")}
+          >
             <Ellipsis className="size-4" />
           </Button>
           <Dropdown.Popover placement="bottom end">

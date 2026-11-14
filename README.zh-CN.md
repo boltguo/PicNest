@@ -15,10 +15,10 @@
 
 ## 功能
 
-- **上传** —— 拖拽、剪贴板粘贴、多文件并发、单文件进度
+- **上传** —— 拖拽、剪贴板粘贴、多文件并发、单文件与总进度、取消、失败项批量重试
 - **整理** —— 文件夹、面包屑导航、移动与重命名、六种排序
-- **浏览** —— 自适应网格、灯箱预览、查看详情
-- **直链** —— `/f/<key>`，永久公开，随便往哪贴
+- **浏览** —— 缩略图网格、分页与服务端排序、灯箱预览、查看详情
+- **直链** —— `/f/<key>`，支持复制 URL、Markdown 和 HTML
 - **分享链接** —— 可设过期时间与访问密码，可查访问量、可撤销
 - **自动去重** —— 内容相同的图片只存一份，上传多少次都一样
 - **一个密码** —— JWT 会话 7 天，登录在边缘限流
@@ -76,6 +76,12 @@ pnpm deploy
 
 R2 桶保持私有：关闭 `r2.dev` 公开访问，不给桶绑定自定义域名。
 
+已有部署升级时，继续运行 `pnpm deploy`。迁移会保留现有文件和分享记录，并创建
+`LIBRARY` Durable Object 绑定来协调写入和后台任务；必填环境变量仍然只有上述两个。
+
+通过 Cloudflare Workers Builds 自动部署时，`pnpm build` 会在构建成功后自动执行 D1 迁移，
+然后由现有部署命令发布 Worker；本地与 GitHub CI 构建不会修改远程数据库。
+
 ## 本地开发
 
 ```bash
@@ -84,11 +90,12 @@ cp .dev.vars.example .dev.vars   # 设置 ADMIN_PASSWORD 和 JWT_SECRET
 pnpm dev                         # worker :8787 + vite :5173
 ```
 
-打开 http://localhost:5173。Vite 把 `/api`、`/f/…`、`/s/…` 代理到 Worker；
+打开 http://localhost:5173。Vite 把 `/api`、`/f/…`、`/t/…`、`/s/…` 代理到 Worker；
 本地 D1 与 R2 数据在 `.wrangler/state/`。
 
 ```bash
 pnpm typecheck                   # worker + web
+pnpm test                        # 本地 D1/R2 集成测试与单元测试
 pnpm db:generate                 # 改完 worker/src/db/schema.ts 之后
 pnpm db:migrate:local            # 把新迁移应用到本地
 ```
@@ -96,29 +103,16 @@ pnpm db:migrate:local            # 把新迁移应用到本地
 ## 工作原理
 
 ```mermaid
-flowchart LR
-    subgraph browser["浏览器"]
-        SPA["React SPA<br/>HeroUI · TanStack Query"]
-    end
-    guest["分享链接访问者"]
-
-    subgraph edge["Cloudflare 边缘"]
-        W["Worker · Hono"]
-        ASSETS["静态资源<br/>web/dist"]
-    end
-
-    subgraph storage["存储（私有，仅通过绑定访问）"]
-        R2[("R2<br/>图片字节")]
-        D1[("D1 · SQLite<br/>元数据索引")]
-    end
-
-    SPA -->|"/api/* + JWT"| W
-    SPA -->|"/f/&lt;key&gt;"| W
-    guest -->|"/s/&lt;token&gt;"| W
-    W --> ASSETS
-    W -->|BUCKET 绑定| R2
-    W -->|DB 绑定| D1
+flowchart TD
+    B["浏览器"] --> W["Worker"]
+    W -->|"读取"| R["R2 图片"]
+    W -->|"读取"| D["D1 元数据"]
+    W -->|"写入"| C["图库协调器"]
+    C -->|"串行写入与后台任务"| R
+    C --> D
 ```
+
+Worker 提供管理页面和读取接口，`LIBRARY` Durable Object 串行处理写入，并通过 alarm 分批完成删除与扫描。
 
 一个 Worker 扛下全部：React 应用作为静态资源、JSON API、图片字节，以及服务端渲染的
 分享页。
@@ -131,15 +125,21 @@ flowchart LR
 **R2 是图片字节的事实来源，D1 是其余一切的事实来源** —— 名称、文件夹、有哪些逻辑文件，
 以及全部分享链接。完整备份是两边加起来，任何一边都推不出另一边。
 
-`POST /api/repair` 做的是两边对账：R2 里有对象但没有记录的导入，有记录但对象已经没了的
-删掉。它是一致性修复，**不是**数据库恢复。每个对象只带着它第一次上传时的名称和文件夹，
-所以导入能把图片按原名找回来，但找不回重命名、移动、去重图片被归到的第二个文件夹，以及
-任何分享链接。那些要靠
-[D1 Time Travel](https://developers.cloudflare.com/d1/reference/time-travel/) 恢复到
-某个时间点 —— 免费计划 7 天，付费计划 30 天。
+### 图库维护
 
-repair 只认 PicNest 自己的内容寻址 key，并且每次最多导入十个对象，以免超出单次调用的
-查询预算。只要返回里的 `remaining` 还不是 0，就再跑一次。
+右上角菜单打开“图库维护”：
+
+- **扫描图库**：后台分页检查 D1 和 R2，保存进度，失败后可重试。缺失原图的记录只标记异常，
+  保留文件名称、文件夹和分享链接；重新上传原图即可恢复。
+- **导入**：扫描结果中的未入库图片需要手动选择导入，曾主动删除的对象不会被重新导入。
+- **补生成缩略图**：在浏览器中依次处理历史图片，支持取消；处理期间保持页面打开。
+  原图保持不变，动图使用静态缩略图，预览仍加载原图。解码失败时可再次运行补生成。
+
+文件夹删除会创建后台任务，进度在“图库维护”中查看。处理中或失败待重试的目录暂时禁止
+上传、移动和重命名。图片清理失败时自动重试，任务完成后才移除目录。
+同一张图被多个文件夹引用时，仅在最后一个引用移除后清理图片。
+
+修复扫描不是完整备份。文件名、文件夹和分享链接的恢复仍需要 D1 备份。
 
 ### 安全
 
@@ -166,17 +166,25 @@ PicNest 原样存储、原样返回你的字节，不会清除 EXIF。手机直�
 | 方法 | 路径 | 说明 | 鉴权 |
 | --- | --- | --- | --- |
 | POST | `/api/login` | `{password}` → `{token}` | - |
-| GET | `/api/list?folder=` | 文件夹内容 + 全局统计 | ✓ |
+| GET | `/api/list?folder=` | 分页文件列表；参数 `folder`、`sort`、`limit`、`cursor` | ✓ |
 | PUT | `/api/upload?name=&folder=` | body 为原始字节，按内容去重 | ✓ |
 | PATCH | `/api/file` | `{id, folder?, name?}` —— 移动 / 重命名 | ✓ |
 | DELETE | `/api/file?id=` | 删除单个文件 | ✓ |
 | GET | `/api/folders` | 所有文件夹路径 | ✓ |
 | POST | `/api/folder` | `{path}` —— 创建（幂等） | ✓ |
-| DELETE | `/api/folder?path=` | 递归删除文件夹 | ✓ |
+| DELETE | `/api/folder?path=` | 创建递归删除任务（202） | ✓ |
 | POST | `/api/share` | `{id, hours?, password?}` → `{url, exp}` | ✓ |
 | GET | `/api/shares` | 有效的分享列表与访问量 | ✓ |
 | DELETE | `/api/share?token=` | 撤销分享 | ✓ |
-| POST | `/api/repair` | D1 索引与 R2 对账修复 | ✓ |
+| POST | `/api/repair` | 创建索引扫描任务（202） | ✓ |
+| GET | `/api/stats` | 全局文件数与去重存储大小 | ✓ |
+| GET | `/api/jobs` | 后台任务与待清理对象数 | ✓ |
+| POST | `/api/jobs/:id/retry` | 继续失败任务 | ✓ |
+| GET | `/api/repair/:id?after=` | 分页扫描结果 | ✓ |
+| POST | `/api/repair/import` | `{id}`，导入选中的扫描结果 | ✓ |
+| PUT | `/api/thumbnail?id=&width=&height=` | 上传 WebP 缩略图（最大 512 KB） | ✓ |
+| GET | `/api/thumbnails/pending?after=` | 待生成缩略图的文件 | ✓ |
+| GET | `/t/<key>` | 缩略图，未生成时回退到原图 | - |
 | GET | `/f/<key>` | 公开直链 | - |
 | GET | `/s/<token>` | 访问分享，或密码表单 | - |
 | POST | `/s/<token>` | `password=` → 解锁 Cookie，然后重定向 | - |

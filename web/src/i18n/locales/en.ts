@@ -1,4 +1,29 @@
 export default {
+  maintenance: {
+    title: "Library maintenance",
+    description:
+      "Scan for missing or unindexed images. Missing records and share links are kept. Import only the images you choose.",
+    scan: "Scan library",
+    thumbnails: "Generate missing thumbnails",
+    thumbnailProgress:
+      "Thumbnails: {{done}} created · {{failed}} failed. Keep this page open while processing.",
+    cleanup: "{{count}} objects waiting for cleanup",
+    failed: "Operation failed, please retry",
+    running: "In progress",
+    done: "Completed",
+    error: "Failed",
+    retryHint: "Retry continues from the saved position.",
+    scanned: "{{count}} entries checked",
+    results: "Results",
+    noFindings: "No issues found so far",
+    missing: "Original missing — re-upload to restore it",
+    unindexed: "Image exists without a library record",
+    import: "Import",
+    imported: "Imported",
+  },
+  links: {
+    format: "Copy format",
+  },
   app: { name: "PicNest" },
   common: {
     cancel: "Cancel",
@@ -11,9 +36,11 @@ export default {
   },
   error: {
     files: "Could not load this folder",
-    filesDescription: "The request did not go through. Check your connection and try again.",
+    filesDescription:
+      "The request did not go through. Check your connection and try again.",
     shares: "Could not load share links",
-    sharesDescription: "The request did not go through. Check your connection and try again.",
+    sharesDescription:
+      "The request did not go through. Check your connection and try again.",
   },
   login: {
     subtitle: "Enter the admin password to continue",
@@ -37,6 +64,18 @@ export default {
     hint: "JPEG · PNG · GIF · WebP · AVIF, up to 32 MB each",
   },
   upload: {
+    cancelHint:
+      "Cancelling stops pending work; images already saved stay in the library.",
+    queue: "Upload queue",
+    summary: "{{done}} / {{total}} uploaded",
+    expand: "Expand uploads",
+    collapse: "Collapse uploads",
+    totalProgress: "Total upload progress",
+    processing: "Preparing preview",
+    cancelled: "Cancelled",
+    retryAll: "Retry failed",
+    cancelAll: "Cancel remaining",
+    clear: "Clear finished",
     queued: "Queued",
     done: "Done",
     error: "Failed",
@@ -49,6 +88,7 @@ export default {
   },
   breadcrumb: { home: "Library" },
   folder: {
+    deleteStarted: "Folder deletion started",
     items_one: "{{count}} item",
     items_other: "{{count}} items",
     new: "New folder",
@@ -64,8 +104,10 @@ export default {
     deleteFailed: "Could not delete folder",
   },
   file: {
+    loadMore: "Load more",
     empty: "No images yet",
-    emptyDescription: "Drop images into the area above, click it to browse, or paste one in.",
+    emptyDescription:
+      "Drop images into the area above, click it to browse, or paste one in.",
     emptyFolder: "This folder is empty",
     emptyFolderDescription:
       "Upload here, or move images in from another folder.",
@@ -113,6 +155,8 @@ export default {
     smallest: "Smallest",
   },
   share: {
+    publicNotice:
+      "Password and expiry apply only to this share link. The image’s public direct link remains accessible.",
     action: "Share…",
     title: "Create a share link",
     expiry: "Expires",

@@ -1,16 +1,14 @@
 import { zValidator } from "@hono/zod-validator";
-import { eq, or } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
-import { createDb, files, folders } from "../db";
+import { createDb, files, folders, jobs } from "../db";
 import { requireAuth } from "../lib/auth";
-import { deleteFileRows } from "../lib/files";
-import { descendantOf, ensureFolders, folderPathSchema } from "../lib/paths";
+import { assertFolderWritable, subtree } from "../lib/maintenance";
+import { ensureFolders, folderPathSchema } from "../lib/paths";
 import type { AppEnv } from "../types";
 
 export const folderRoutes = new Hono<AppEnv>()
-
-  /** Every folder path, for pickers that need the whole tree at once. */
   .get("/api/folders", requireAuth, async (c) => {
     const rows = await createDb(c.env.DB)
       .select({ path: folders.path })
@@ -18,20 +16,17 @@ export const folderRoutes = new Hono<AppEnv>()
       .orderBy(folders.path);
     return c.json({ folders: rows.map((r) => r.path) });
   })
-
-  /** Create a folder (and any missing ancestors). Idempotent. */
   .post(
     "/api/folder",
     requireAuth,
     zValidator("json", z.object({ path: folderPathSchema })),
     async (c) => {
       const { path } = c.req.valid("json");
+      await assertFolderWritable(c.env, path);
       await ensureFolders(createDb(c.env.DB), path);
       return c.json({ path });
-    }
+    },
   )
-
-  /** Delete a folder recursively: every file underneath, in R2 and D1. */
   .delete(
     "/api/folder",
     requireAuth,
@@ -39,18 +34,41 @@ export const folderRoutes = new Hono<AppEnv>()
     async (c) => {
       const { path } = c.req.valid("query");
       const db = createDb(c.env.DB);
-
-      const deletedFiles = await deleteFileRows(
-        db,
-        c.env.BUCKET,
-        or(eq(files.folder, path), descendantOf(files.folder, path))
-      );
-      await db
-        .delete(folders)
+      const active = await db
+        .select()
+        .from(jobs)
         .where(
-          or(eq(folders.path, path), descendantOf(folders.path, path))
+          and(eq(jobs.kind, "delete-folder"), sql`${jobs.status} <> 'done'`),
         );
-
-      return c.json({ ok: true, deletedFiles });
-    }
+      const existing = active.find(
+        (j) => path === j.path || path.startsWith(`${j.path}/`),
+      );
+      if (existing) return c.json(existing, 202);
+      if (active.some((j) => j.path.startsWith(`${path}/`)))
+        return c.json({ error: "child folder deletion in progress" }, 409);
+      const folder = await db
+        .select()
+        .from(folders)
+        .where(eq(folders.path, path))
+        .get();
+      if (!folder) return c.json({ error: "not found" }, 404);
+      const total = await db
+        .select({ count: sql<number>`count(*)` })
+        .from(files)
+        .where(subtree(path))
+        .get();
+      const row = await db
+        .insert(jobs)
+        .values({
+          id: crypto.randomUUID(),
+          kind: "delete-folder",
+          path,
+          total: total?.count ?? 0,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        })
+        .returning()
+        .get();
+      return c.json(row, 202);
+    },
   );

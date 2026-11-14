@@ -80,6 +80,7 @@ export function ShareDialog({ file, onClose, onCreated }: ShareDialogProps) {
             <Modal.Heading>{t("share.title")}</Modal.Heading>
           </Modal.Header>
           <Modal.Body>
+            <p className="text-muted mb-4 text-sm">{t("share.publicNotice")}</p>
             {url === null ? (
               <div className="flex flex-col gap-4">
                 <Select

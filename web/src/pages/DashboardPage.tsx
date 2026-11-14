@@ -1,5 +1,16 @@
-import { Button, Dropdown, Skeleton, buttonVariants, toast } from "@heroui/react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  Button,
+  Dropdown,
+  Skeleton,
+  buttonVariants,
+  toast,
+} from "@heroui/react";
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import {
   CircleAlert,
   Ellipsis,
@@ -13,7 +24,7 @@ import {
   RotateCw,
 } from "lucide-react";
 import prettyBytes from "pretty-bytes";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router";
 import { Breadcrumb } from "../components/Breadcrumb";
@@ -28,6 +39,9 @@ import { MoveDialog } from "../components/MoveDialog";
 import { NewFolderDialog } from "../components/NewFolderDialog";
 import { ShareDialog } from "../components/ShareDialog";
 import { SharesDialog } from "../components/SharesDialog";
+import { LinkFormatMenu } from "../components/LinkFormatMenu";
+import { MaintenanceDialog } from "../components/MaintenanceDialog";
+import { formatLink } from "../lib/links";
 import { SortMenu } from "../components/SortMenu";
 import { UploadDropzone } from "../components/UploadDropzone";
 import { UploadProgressList } from "../components/UploadProgressList";
@@ -41,17 +55,7 @@ import {
   type FolderInfo,
 } from "../lib/api";
 import { useAuthStore } from "../store/auth";
-import { usePrefsStore, type SortKey } from "../store/prefs";
-
-/** Comparators for the toolbar sort menu. */
-const COMPARATORS: Record<SortKey, (a: FileInfo, b: FileInfo) => number> = {
-  newest: (a, b) => b.uploaded - a.uploaded,
-  oldest: (a, b) => a.uploaded - b.uploaded,
-  nameAsc: (a, b) => a.name.localeCompare(b.name),
-  nameDesc: (a, b) => b.name.localeCompare(a.name),
-  largest: (a, b) => b.size - a.size,
-  smallest: (a, b) => a.size - b.size,
-};
+import { usePrefsStore } from "../store/prefs";
 
 /** Where this instance came from — every deployment is someone's own copy. */
 const SOURCE_URL = "https://github.com/boltguo/PicNest";
@@ -71,7 +75,7 @@ export default function DashboardPage() {
   const navigateToFolder = (path: string) =>
     setSearchParams(path === "" ? {} : { folder: path });
 
-  const { tasks, start, retry, dismiss } = useUploads();
+  const { tasks, start, retry, cancel, dismiss } = useUploads();
   // Paste lands in the folder currently on screen, same as a drop would.
   usePasteUpload((files) => start(files, folder));
 
@@ -85,16 +89,64 @@ export default function DashboardPage() {
   const [details, setDetails] = useState<FileInfo | null>(null);
   const [sharesOpen, setSharesOpen] = useState(false);
   const sort = usePrefsStore((s) => s.sort);
+  const linkFormat = usePrefsStore((s) => s.linkFormat);
+  const [maintenanceOpen, setMaintenanceOpen] = useState(false);
 
-  const { data, isLoading, isError, refetch, isFetching } = useQuery({
-    queryKey: ["files", folder],
-    queryFn: () => api.list(folder),
+  const {
+    data: pages,
+    isLoading,
+    isError,
+    refetch,
+    isFetching,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useInfiniteQuery({
+    queryKey: ["files", folder, sort],
+    queryFn: ({ pageParam, signal }) =>
+      api.list(folder, sort, pageParam, signal),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.nextCursor ?? undefined,
   });
+  const data = pages
+    ? { ...pages.pages[0], files: pages.pages.flatMap((page) => page.files) }
+    : undefined;
+  const stats = useQuery({
+    queryKey: ["stats"],
+    queryFn: api.stats,
+    staleTime: 30_000,
+  });
+  const jobs = useQuery({
+    queryKey: ["jobs"],
+    queryFn: api.jobs,
+    refetchInterval: (query) =>
+      query.state.data?.jobs.some((job) => job.status === "running") ||
+      query.state.data?.cleanupPending
+        ? 2000
+        : false,
+  });
+  const jobSignature = jobs.data
+    ? JSON.stringify([
+        jobs.data.jobs.map((job) => [job.id, job.updatedAt]),
+        jobs.data.cleanupPending,
+      ])
+    : "";
+  const previousJobs = useRef("");
+  useEffect(() => {
+    if (previousJobs.current && previousJobs.current !== jobSignature) {
+      void queryClient.invalidateQueries({ queryKey: ["files"] });
+      void queryClient.invalidateQueries({ queryKey: ["stats"] });
+      void queryClient.invalidateQueries({ queryKey: ["folders"] });
+    }
+    previousJobs.current = jobSignature;
+  }, [jobSignature, queryClient]);
 
   const invalidate = () =>
     Promise.all([
       queryClient.invalidateQueries({ queryKey: ["files"] }),
       queryClient.invalidateQueries({ queryKey: ["folders"] }),
+      queryClient.invalidateQueries({ queryKey: ["stats"] }),
+      queryClient.invalidateQueries({ queryKey: ["jobs"] }),
     ]);
 
   const removeMutation = useMutation({
@@ -109,7 +161,8 @@ export default function DashboardPage() {
   const removeFolderMutation = useMutation({
     mutationFn: api.removeFolder,
     onSuccess: () => {
-      toast.success(t("folder.deleted"));
+      toast.success(t("folder.deleteStarted"));
+      setMaintenanceOpen(true);
       void invalidate();
     },
     onError: () => toast.danger(t("folder.deleteFailed")),
@@ -122,7 +175,9 @@ export default function DashboardPage() {
 
   const copyLink = (file: FileInfo) => {
     navigator.clipboard
-      .writeText(absoluteUrl(fileUrl(file.key)))
+      .writeText(
+        formatLink(absoluteUrl(fileUrl(file.key)), file.name, linkFormat),
+      )
       .then(() => toast.success(t("file.linkCopied")))
       .catch(() => toast.danger(t("file.linkCopyFailed")));
   };
@@ -131,10 +186,12 @@ export default function DashboardPage() {
     void i18n.changeLanguage(i18n.language.startsWith("zh") ? "en" : "zh");
 
   const isEmpty =
-    !!data && data.folders.length === 0 && data.files.length === 0 && !isLoading;
+    !!data &&
+    data.folders.length === 0 &&
+    data.files.length === 0 &&
+    !isLoading;
 
-  // Folders stay alphabetical — they are navigation, not content.
-  const sortedFiles = data ? [...data.files].sort(COMPARATORS[sort]) : [];
+  const sortedFiles = data?.files ?? [];
 
   return (
     // One flex column owns the vertical rhythm; sections carry no margins.
@@ -148,10 +205,10 @@ export default function DashboardPage() {
           <div className="min-w-0">
             <h1 className="truncate text-lg font-semibold">{t("app.name")}</h1>
             <p className="text-muted mt-0.5 truncate text-xs">
-              {data
+              {stats.data
                 ? t("header.stats", {
-                    count: data.count,
-                    size: prettyBytes(data.totalSize),
+                    count: stats.data.count,
+                    size: prettyBytes(stats.data.totalSize),
                   })
                 : t("common.loading")}
             </p>
@@ -195,6 +252,9 @@ export default function DashboardPage() {
             </Button>
             <Dropdown.Popover placement="bottom end">
               <Dropdown.Menu>
+                <Dropdown.Item onAction={() => setMaintenanceOpen(true)}>
+                  {t("maintenance.title")}
+                </Dropdown.Item>
                 <Dropdown.Item onAction={() => setSharesOpen(true)}>
                   <Link2 className="size-4" aria-hidden />
                   {t("share.manage")}
@@ -210,13 +270,23 @@ export default function DashboardPage() {
       </header>
 
       <UploadDropzone onFiles={(files) => start(files, folder)} />
-      <UploadProgressList tasks={tasks} onRetry={retry} onDismiss={dismiss} />
+      <UploadProgressList
+        tasks={tasks}
+        onRetry={retry}
+        onDismiss={dismiss}
+        onCancel={cancel}
+      />
 
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <Breadcrumb folder={folder} onNavigate={navigateToFolder} />
         <div className="flex shrink-0 items-center gap-2">
+          <LinkFormatMenu />
           <SortMenu />
-          <Button size="sm" variant="primary" onPress={() => setNewFolderOpen(true)}>
+          <Button
+            size="sm"
+            variant="primary"
+            onPress={() => setNewFolderOpen(true)}
+          >
             <FolderPlus className="size-3.5" aria-hidden />
             {t("folder.new")}
           </Button>
@@ -289,6 +359,19 @@ export default function DashboardPage() {
         </div>
       )}
 
+      {hasNextPage && (
+        <Button
+          variant="secondary"
+          isPending={isFetchingNextPage}
+          onPress={() => void fetchNextPage()}
+        >
+          {t("file.loadMore")}
+        </Button>
+      )}
+      <MaintenanceDialog
+        open={maintenanceOpen}
+        onOpenChange={setMaintenanceOpen}
+      />
       <Lightbox file={preview} onClose={() => setPreview(null)} />
 
       <FileDetailsDialog file={details} onClose={() => setDetails(null)} />
@@ -302,7 +385,9 @@ export default function DashboardPage() {
       <ShareDialog
         file={sharing}
         onClose={() => setSharing(null)}
-        onCreated={() => void queryClient.invalidateQueries({ queryKey: ["shares"] })}
+        onCreated={() =>
+          void queryClient.invalidateQueries({ queryKey: ["shares"] })
+        }
       />
 
       <SharesDialog open={sharesOpen} onOpenChange={setSharesOpen} />
