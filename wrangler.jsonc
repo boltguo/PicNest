@@ -21,8 +21,8 @@
     {
       "binding": "DB",
       "database_name": "picnest",
-      // The Deploy to Cloudflare flow replaces this with the database selected
-      // for the cloned repository. Local dev uses SQLite and ignores this id.
+      // For a new deployment, replace this with the id returned by
+      // `pnpm exec wrangler d1 create picnest`.
       "database_id": "75185edc-8a4e-4682-8a4d-b9d4f68f1532",
       "migrations_dir": "migrations",
     },

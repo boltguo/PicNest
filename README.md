@@ -13,10 +13,6 @@
 
 <p align="center">English | <a href="README.zh-CN.md">简体中文</a></p>
 
-<p align="center">
-  <a href="https://deploy.workers.cloudflare.com/?url=https://github.com/boltguo/PicNest"><img alt="Deploy to Cloudflare" src="https://deploy.workers.cloudflare.com/button"></a>
-</p>
-
 ## Features
 
 - **Upload** — drag and drop, paste from the clipboard, progress per file
@@ -31,36 +27,57 @@
 JPEG, PNG, GIF, WebP and AVIF, up to 32 MB per file. The format is decided by
 reading the file's own bytes, not by trusting what the browser said it was.
 
-## Deploy
+## Self-deployment
 
-### One click
+Install Node.js, pnpm and OpenSSL, and enable R2 in your Cloudflare account.
 
-Use the button at the top of this page. Cloudflare clones this repo into your
-own GitHub account, creates the R2 bucket and D1 database for you, asks for the
-two secrets on the setup page, and deploys. Pushes to your copy redeploy
-themselves from then on.
-
-The setup page asks for both of these:
-
-- `ADMIN_PASSWORD` — what you type to sign in. Pick a good one.
-- `JWT_SECRET` — the key sessions are signed with. **Generate this, do not
-  choose it**: `openssl rand -base64 32`. It is an HMAC key, and a memorable
-  one turns any captured session token into an offline guessing game.
-
-Two things to do in the dashboard afterwards:
-
-- Attach your domain to the Worker.
-- Leave the bucket private — no `r2.dev` subdomain, no custom domain on the
-  bucket. Every byte should be served through the Worker.
-
-### From your machine
+### 1. Create the resources
 
 ```bash
-npx wrangler r2 bucket create picnest
-npx wrangler d1 create picnest   # paste database_id into wrangler.jsonc
-pnpm secret                      # prompts for ADMIN_PASSWORD, generates JWT_SECRET
-pnpm deploy                      # build + migrate + publish
+git clone https://github.com/boltguo/PicNest.git
+cd PicNest
+pnpm install
+pnpm exec wrangler login
+pnpm exec wrangler r2 bucket create picnest
+pnpm exec wrangler d1 create picnest
 ```
+
+In `wrangler.jsonc`, replace `d1_databases[0].database_id` with the ID returned
+by the last command. The R2 bucket uses the `BUCKET` binding and D1 uses `DB`;
+the commands above match the resource names in the configuration.
+
+### 2. Set the environment variables
+
+Both variables are required and should be stored as Worker secrets in production:
+
+| Variable | Purpose | Value |
+| --- | --- | --- |
+| `ADMIN_PASSWORD` | Dashboard login password | A strong password of your choice |
+| `JWT_SECRET` | Signs sessions and share unlock cookies | A random key generated with `openssl rand -base64 32` |
+
+```bash
+pnpm secret
+```
+
+This prompts for `ADMIN_PASSWORD` and generates and uploads `JWT_SECRET`.
+To set either value separately, use `pnpm exec wrangler secret put ADMIN_PASSWORD`
+or `pnpm exec wrangler secret put JWT_SECRET`.
+
+For local development, copy `.dev.vars.example` to `.dev.vars` and fill in the
+same two variables. Keep the values out of source control.
+
+### 3. Deploy
+
+```bash
+pnpm deploy
+```
+
+This builds the frontend, applies the remote D1 migrations and deploys the Worker.
+Open the URL printed by Wrangler. You can attach a custom domain to the Worker
+in the Cloudflare dashboard.
+
+Keep the R2 bucket private: disable public access through `r2.dev` and do not
+attach a custom domain to the bucket.
 
 ## Local development
 
